@@ -5,15 +5,23 @@ It's built with [three.js](https://threejs.org/) and is a static site with no bu
 
 ## Features
 
-Two ways to play:
+Three ways to play, straight from the menu:
 
-- **Play with Bots:** you against 1–3 bots (Easy / Normal / Hard). Name yourself and the bots on the setup screen.
-- **Play Online:** create a room and share the 5-letter code or link, or join a friend's room. Uses WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards. Empty seats are filled by bots, and if someone drops out a bot takes over.
-- **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking +2/+4, draw until playable, must call “Color Card!”).
-- **3D meadow:** lime grass, low-poly trees, bushes and flowers, soft sun shadows under the cards, and arrows on the grass that walk the way play is going.
+- **Single play:** you against 1–3 bots (Easy / Normal / Hard). Name yourself and the bots on the setup screen.
+- **Group:** create a private room and share the 5-letter code or link, or join a friend's room with their code.
+- **Online:** pick a table size (2, 3 or 4) and tap **Find players**. Everyone searching for the same table size is grouped into one room. The game starts by itself 3 seconds after the table fills, or 30 seconds after a second player joins (bots take the empty seats). The first player at a table can also tap **Play now** at any time.
+
+Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards, and if someone drops out a bot takes over.
+
+- **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking +2/+4, draw until playable, must call “Last card!”, and **More action cards**, on by default: after every shuffle Skip, Reverse, +2, +4 and colour cards are 2.5× as likely as a number card to come up, so roughly half the cards you get are action cards instead of 30%).
+- **3D meadow:** lime grass, low-poly trees, bushes and flowers, and soft sun shadows under the cards.
+- **2D / 3D and Portrait / Landscape:** buttons at the top of the menu and the game (also in Settings). 2D looks straight down on the table. On phones you can force portrait or landscape: Android goes fullscreen and locks the rotation; on iPhone (which can't lock it) the game turns itself sideways.
+- **Direction circle:** a white energy ring around the piles with lightning streaks racing clockwise or anticlockwise in the current colour (they turn red when someone picks red on a wild). A Reverse flashes the ring, throws sparks off it and whips the lightning round the other way. The badge at the top shows the colour and the direction too.
+- **Male voice call-outs** (recorded clips, so every phone sounds the same): “Last card!”, “Skipped!”, “Reverse!”, “Pick two!”, “Pick four!”, “Color card!” plus the chosen colour (“Red!”, “Green!”, “Yellow!”, “Blue!”), “Draw card!”, “Pass.”, “Your turn!”, “You win!” / “Winner!”. Action cards also flash big text.
+- **Music:** a light looping tune made with Web Audio. Sound effects, voice and music each have their own switch in Settings; the speaker button in the game mutes everything.
 - **Your hand is held like real cards:** a curved fan along the bottom of the screen. Cards you can play are raised; the rest are dimmed.
 - **Throw a card by tapping it or swiping it up.** Press and hold a card to look at it up close, and tap the discard pile to see its top card. Cards you draw pop up in front of you so you can see them before they go into your hand.
-- **Celebrations:** firecracker volleys with booms, 3D fireworks and confetti for wins, screen-shake punches for action cards, and sounds for throwing, landing, drawing and flipping cards. All sounds are generated with Web Audio (no audio files). Phones also vibrate on some events.
+- **Celebrations:** firecracker volleys with booms, 3D fireworks and confetti for wins, screen-shake punches for action cards, and sounds for throwing, landing, drawing and flipping cards. Sound effects are generated with Web Audio. Phones also vibrate on some events.
 - **PWA:** installable and works offline (except online play). Local games auto-save and can be continued.
 
 ## Rules
@@ -22,10 +30,10 @@ Two ways to play:
 - **Skip:** the next player misses a turn. **Reverse:** changes direction (acts as Skip with 2 players).
 - **+2 / Wild +4:** the next player draws and misses their turn. With stacking on, they can pass it on with their own +2 / +4 instead.
 - Can't play? Draw one card (or keep drawing, with "draw until playable"). If the drawn card fits, you can play it right away or pass.
-- With two cards left, tap **Color Card!** before you play — the game shouts it out loud for everyone. Forget, and you draw 2.
+- With two cards left, tap the big **Last card!** button before you play — a male voice shouts “Last card!” for everyone. Forget, and you draw 2.
 - The round winner scores the cards left in the other hands: numbers count face value, action cards 20 and wilds 50.
 
-**Controls:** tap a raised card or swipe it up to throw it, press and hold to look at a card, and tap the deck or **Draw** if nothing fits. On a keyboard, Space draws or passes, 1–9 plays your playable cards in order, C calls Color Card!, and Esc opens the menu.
+**Controls:** tap a raised card or swipe it up to throw it, press and hold to look at a card, and tap the deck or **Draw** if nothing fits. On a keyboard, Space draws or passes, 1–9 plays your playable cards in order, C or L calls Last card!, and Esc opens the menu.
 
 ## Run locally
 
@@ -56,9 +64,23 @@ js/scene.js           three.js meadow, card art (canvas textures), held hand, ge
 js/main.js            Controller: modes, turns, pass & play, online sync, effects
 js/audio.js           Procedural Web Audio sound effects
 js/net.js             PeerJS host/client wrappers
+js/view.js            Screen size / pointer helper for the forced-orientation mode
 js/bgfx.js, fx3d.js   Background fireworks and 3D particle effects
 js/anim.js            Tween helper
 vendor/               three.js, PeerJS (MIT)
 fonts/                Fredoka (SIL Open Font License)
+audio/voice/          Voice clips (Piper TTS, en_US “john” voice, trained on public-domain LibriVox audio)
 sw.js, manifest.webmanifest, icons/   PWA
 ```
+
+## How quick match works (no server needed)
+
+Quick match runs entirely on the free public PeerJS broker:
+
+1. For each table size there are 12 well-known "beacon" IDs (`colorcard-mm-v1-4p-0` … `-11`).
+2. A searcher asks each beacon in turn. A waiting table answers with its room code (join it) or "full" (try the next one).
+3. If a beacon ID is free, the searcher claims it and becomes the host of a new table. Only one peer can hold an ID, so two people racing for the same free slot sort themselves out.
+4. A host waiting alone at a higher-numbered table checks the lower ones every few seconds. If someone is waiting there, it closes its table and joins theirs, so players who searched at the same moment still end up together.
+5. When a game starts, the host releases its beacon so the slot can be reused.
+
+If you change the rules or the online message format, bump the `v1` in `MM_PREFIX` (and `PREFIX`) in `js/net.js`, so old and new versions don't get matched together.

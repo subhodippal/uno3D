@@ -1,3 +1,4 @@
+import { view } from './view.js';
 // Background celebrations drawn on a 2D canvas behind the 3D board:
 // firework rockets (several burst styles), corner fountains, confetti rain,
 // colour flashes and light beams. The loop only runs while something is alive.
@@ -18,8 +19,8 @@ const MAX_CONFETTI = 260;
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 1.5);
-  W = window.innerWidth;
-  H = window.innerHeight;
+  W = view.w;
+  H = view.h;
   cv.width = Math.round(W * DPR);
   cv.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);

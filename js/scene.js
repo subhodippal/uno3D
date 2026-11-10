@@ -2,6 +2,7 @@
 // White classic cards with soft shadows, the viewer's hand held as a real fan,
 // opponents' cards around the play area, flights, swipe / tap / long-press, celebrations.
 
+import { view } from './view.js';
 import * as THREE from '../vendor/three.module.min.js';
 import { tween, ease, updateTweens, wait } from './anim.js';
 import { Fx3D, softSprite } from './fx3d.js';
@@ -364,21 +365,8 @@ export class Arena {
     this._grass();
     this._clouds();
 
-    // direction arrows walking around the piles
-    this.chevrons = new THREE.Group();
-    const shape = new THREE.Shape();
-    shape.moveTo(0.2, 0); shape.lineTo(-0.12, 0.16); shape.lineTo(-0.04, 0); shape.lineTo(-0.12, -0.16); shape.closePath();
-    const chevGeo = new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
-    this.chevMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false });
-    for (let i = 0; i < 6; i++) {
-      const m = new THREE.Mesh(chevGeo, this.chevMat);
-      m.userData.a = (i / 6) * Math.PI * 2;
-      this.chevrons.add(m);
-    }
-    this.chevrons.position.y = 0.012;
-    scene.add(this.chevrons);
-    this.chevAngle = 0;
-    this.dirScale = 1;
+    // direction circle: white energy ring with lightning streaks racing the way play goes
+    this._buildRing();
 
     this.glowMat = new THREE.MeshBasicMaterial({ map: softSprite(), color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
     const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), this.glowMat);
@@ -410,6 +398,106 @@ export class Arena {
     });
     this.built = true;
     this.setDeckCount(this.deckCount);
+  }
+
+  _buildRing() {
+    const RX = 2.45, RZ = 2.0;
+    // flat elliptical band; uv.x runs round the ring (0..1), uv.y across it
+    const band = (w) => {
+      const seg = 220, pos = [], uv = [], idx = [];
+      for (let i = 0; i <= seg; i++) {
+        const a = (i / seg) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+        pos.push(c * (RX - w / 2), 0, s * (RZ - w / 2), c * (RX + w / 2), 0, s * (RZ + w / 2));
+        uv.push(i / seg, 0, i / seg, 1);
+        if (i < seg) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      return g;
+    };
+    this.ring = new THREE.Group();
+    this.ring.position.y = 0.012;
+
+    // soft halo in the current colour
+    this.ringGlowMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide });
+    const halo = new THREE.Mesh(band(1.0), this.ringGlowMat);
+    halo.renderOrder = 1;
+    this.ring.add(halo);
+
+    // the energy ring: always-white band + lightning streaks racing round in the current colour
+    this.ringU = {
+      uTime: { value: 0 }, uPhase: { value: 0 }, uDir: { value: 1 },
+      uColor: { value: new THREE.Color(0xffffff) }, uFlash: { value: 0 },
+    };
+    this.ringMat = new THREE.ShaderMaterial({
+      uniforms: this.ringU, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `
+        uniform float uTime, uPhase, uDir, uFlash; uniform vec3 uColor; varying vec2 vUv;
+        float hash(float n){ return fract(sin(n) * 43758.5453); }
+        float noise(float x){ float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(hash(i), hash(i + 1.0), f); }
+        void main(){
+          float u = vUv.x, v = vUv.y;
+          float d = abs(v - 0.5) * 2.0;                       // 0 centre .. 1 edge
+          float base = smoothstep(0.62, 0.42, d);             // solid white band
+          float edge = smoothstep(0.62, 0.5, d) - smoothstep(0.5, 0.36, d);
+          // four comets chasing round in the play direction
+          float p = fract(u * 4.0 - uPhase);
+          float tail = uDir > 0.0 ? p : 1.0 - p;
+          float comet = pow(tail, 5.0);
+          // flickering lightning bolt along the ring
+          float st = floor(uTime * 16.0);
+          float j = (noise(u * 110.0 + st * 7.3) - 0.5) * 0.9 + (noise(u * 31.0 - st * 3.1) - 0.5) * 0.6;
+          float line = smoothstep(0.13, 0.0, abs(v - 0.5 - j * 0.42));
+          float spark = 0.65 + 0.35 * hash(st + floor(u * 60.0));
+          float bolt = line * spark * (0.3 + 0.9 * comet);
+          float glow = comet * smoothstep(1.0, 0.1, d);
+          vec3 white = vec3(1.0);
+          vec3 col = mix(white, uColor, clamp(glow * 1.3 + bolt * 0.9 + edge * 0.6, 0.0, 1.0));
+          col = mix(col, white, line * comet * 0.35);         // hot white core at the comet heads
+          col = mix(col, white, uFlash * 0.7);
+          float a = clamp(base * 0.88 + glow * 0.95 + bolt + uFlash * 0.5 * smoothstep(1.0, 0.0, d), 0.0, 1.0);
+          gl_FragColor = vec4(col, a);
+          #include <colorspace_fragment>
+        }`,
+    });
+    const core = new THREE.Mesh(band(0.62), this.ringMat);
+    core.renderOrder = 3;
+    this.ring.add(core);
+
+    this.ringRX = RX; this.ringRZ = RZ;
+    this.scene.add(this.ring);
+    this.chevAngle = 0;
+    this.dirScale = 1;
+    this.ringPulse = 0;
+    this.ringFlash = 0;
+  }
+
+  _ringColor(hex, animate) {
+    const col = new THREE.Color(hex);
+    const from = this.ringU.uColor.value.clone();
+    const fromG = this.ringGlowMat.color.clone();
+    const apply = (k) => {
+      this.ringU.uColor.value.copy(from).lerp(col, k);
+      this.ringGlowMat.color.copy(fromG).lerp(col, k);
+    };
+    if (animate) tween(0.45, apply); else apply(1);
+  }
+
+  // Reverse: white flash, the ring punches out, the lightning whips round the other way and sparks fly off it
+  _flipFx() {
+    this.ringPulse = 1;
+    this.ringFlash = 1;
+    this.dirScale = 10;
+    const hex = this.ringU.uColor.value.getHex();
+    this.fx.shockwave(new THREE.Vector3(0, 0.05, 0), 0xffffff, 3.2);
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const pos = new THREE.Vector3(Math.cos(a) * this.ringRX, 0.08, Math.sin(a) * this.ringRZ);
+      setTimeout(() => this.fx.burst(pos, i % 2 ? hex : 0xffffff, 8, false, { speed: 0.5, up: 0.5, size: 0.1 }), i * 25);
+    }
   }
 
   _trees() {
@@ -614,7 +702,7 @@ export class Arena {
 
   _handMetrics() {
     const visH = 2 * HAND_D * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
-    const W = window.innerWidth, H = window.innerHeight;
+    const W = view.w, H = view.h;
     const k = visH / H;
     const cw = Math.max(72, Math.min(132, Math.min(W * 0.25, H * 0.17)));
     return { k, cw, ch: cw * 1.5, W, H, visH, visW: visH * this.camera.aspect };
@@ -822,18 +910,18 @@ export class Arena {
   }
 
   setTable(V, animate = true) {
+    const prevDir = this.dir, prevColor = this.color;
     this.dir = V.dir;
     this.color = V.color;
     this.turnSeat = V.over ? V.over.winner : V.turn;
     if (!this.built) return;
     const col = new THREE.Color(V.color >= 0 ? COLORS[V.color].hex : 0xffffff);
     const from = this.glowMat.color.clone();
-    const apply = (k) => {
-      const c = from.clone().lerp(col, k);
-      this.glowMat.color.copy(c);
-      this.chevMat.color.copy(c).lerp(new THREE.Color(0xffffff), 0.15);
-    };
+    const apply = (k) => { this.glowMat.color.copy(from).lerp(col, k); };
     if (animate) tween(0.5, apply); else apply(1);
+    this._ringColor(V.color >= 0 ? COLORS[V.color].hex : 0xffffff, animate);
+    if (animate && prevDir !== V.dir) this._flipFx();
+    else if (animate && prevColor !== V.color) this.ringPulse = Math.max(this.ringPulse, 0.6);
   }
 
   setPlayable(ids) {
@@ -1037,7 +1125,6 @@ export class Arena {
     this.fx.shockwave(pos, 0xffffff, c.v === 'w4' ? 4 : 2.2);
     this.fx.burst(pos, hex, c.c === WILD ? 50 : 22, false, { speed: 0.6, up: 0.6, size: 0.12 });
     if (c.c === WILD) COLORS.forEach((cc, i) => setTimeout(() => this.fx.burst(pos, cc.hex, 18, true, { speed: 0.8, size: 0.12 }), i * 70));
-    if (c.v === 'rev') this.dirScale = 7;
     if (typeof c.v !== 'number') this.shake(c.v === 'w4' ? 0.35 : 0.2);
   }
 
@@ -1076,11 +1163,11 @@ export class Arena {
     const rel = this._relSlot(seat);
     p.addScaledVector(new THREE.Vector3(-p.x, 0, -p.z).normalize(), rel === 'top' || rel === 'bottom' ? -1.1 : -0.3);
     p.project(this.camera);
-    return { x: (p.x + 1) / 2 * window.innerWidth, y: (1 - p.y) / 2 * window.innerHeight, rel };
+    return { x: (p.x + 1) / 2 * view.w, y: (1 - p.y) / 2 * view.h, rel };
   }
   pileScreen() {
     const p = new THREE.Vector3(PILE_X, 0, -CH / 2 - 0.2).project(this.camera);
-    return { x: (p.x + 1) / 2 * window.innerWidth, y: (1 - p.y) / 2 * window.innerHeight };
+    return { x: (p.x + 1) / 2 * view.w, y: (1 - p.y) / 2 * view.h };
   }
 
   setDemo(on) { this.demo = on; }
@@ -1091,16 +1178,24 @@ export class Arena {
     const t = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
     const portrait = aspect < 1;
     const dist = Math.max(3.4 / (t * aspect), 4.4 / t);
-    const phi = portrait ? 0.7 : 0.84;
-    const target = new THREE.Vector3(0, 0, portrait ? 1.5 : 1.0);
+    // 3D: tilted view across the table; 2D: straight down from above
+    const phi = this.flat ? 0.02 : portrait ? 0.7 : 0.84;
+    const target = new THREE.Vector3(0, 0, this.flat ? (portrait ? 1.0 : 0.6) : portrait ? 1.5 : 1.0);
     this.camera.position.set(0, Math.cos(phi) * dist, Math.sin(phi) * dist).add(target);
     this.camera.lookAt(target);
     this.camBase.copy(this.camera.position);
     this.camera.updateMatrixWorld();
   }
 
+  setFlat(on) {
+    if (this.flat === on) return;
+    this.flat = on;
+    this.frame();
+    this.layout(0.3);
+  }
+
   resize() {
-    const w = window.innerWidth, h = window.innerHeight;
+    const w = view.w, h = view.h;
     const dprCap = this.quality === 'high' ? 2 : 1.25;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     this.renderer.setSize(w, h, false);
@@ -1120,7 +1215,8 @@ export class Arena {
     const canTouchHand = () => this.handMode && !this.hideHand;
     cv.addEventListener('pointerdown', (e) => {
       if (this._pilePeek) { this._clearPilePeek(); down = null; return; }
-      down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, card: -1, moved: false };
+      const q = view.pt(e);
+      down = { x: q.x, y: q.y, t: performance.now(), id: e.pointerId, card: -1, moved: false };
       if (!canTouchHand()) return;
       const id = this._pickCard(e);
       if (id < 0) return;
@@ -1135,7 +1231,8 @@ export class Arena {
     });
     cv.addEventListener('pointermove', (e) => {
       if (down && down.id === e.pointerId && down.card >= 0) {
-        const dx = e.clientX - down.x, dy = e.clientY - down.y;
+        const q = view.pt(e);
+        const dx = q.x - down.x, dy = q.y - down.y;
         if (Math.hypot(dx, dy) > 10) down.moved = true;
         if (this.peekId < 0 && this.drag) {
           const free = this.interactive && this.playable.has(down.card);
@@ -1154,7 +1251,8 @@ export class Arena {
       if (!down || down.id !== e.pointerId) return;
       const d = down;
       down = null;
-      const dx = e.clientX - d.x, dy = e.clientY - d.y;
+      const q = view.pt(e);
+      const dx = q.x - d.x, dy = q.y - d.y;
       const quick = performance.now() - d.t < 380;
       if (d.card >= 0) {
         const wasPeek = this.peekId === d.card;
@@ -1179,8 +1277,8 @@ export class Arena {
   }
 
   _ray(e) {
-    const r = this.canvas.getBoundingClientRect();
-    this._pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    const q = view.pt(e);
+    this._pointer.set((q.x / view.w) * 2 - 1, -(q.y / view.h) * 2 + 1);
     this._raycaster.setFromCamera(this._pointer, this.camera);
   }
 
@@ -1214,13 +1312,17 @@ export class Arena {
       this.shakeAmt *= Math.pow(0.002, dt);
     } else if (this.shakeAmt) { this.shakeAmt = 0; this.camera.position.copy(this.camBase); }
     if (this.built) {
-      this.dirScale += (1 - this.dirScale) * Math.min(1, dt * 1.5);
-      this.chevAngle -= this.dir * dt * 0.5 * this.dirScale;
-      this.chevrons.children.forEach((c) => {
-        const a = c.userData.a + this.chevAngle;
-        c.position.set(Math.cos(a) * 2.35, 0, Math.sin(a) * 1.9);
-        c.rotation.y = -a + (this.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-      });
+      this.dirScale += (1 - this.dirScale) * Math.min(1, dt * 1.2);
+      // dir 1 = clockwise on screen (bottom -> left -> top -> right) = increasing ring angle
+      this.ringU.uPhase.value += this.dir * dt * 0.45 * this.dirScale;
+      this.ringU.uDir.value = this.dir;
+      this.ringU.uTime.value = t;
+      this.ringFlash = Math.max(0, this.ringFlash - dt * 1.6);
+      this.ringU.uFlash.value = this.ringFlash;
+      this.ringPulse = Math.max(0, this.ringPulse - dt * 1.4);
+      const pk = Math.sin(this.ringPulse * Math.PI);
+      this.ring.scale.set(1 + pk * 0.12, 1, 1 + pk * 0.12);
+      this.ringGlowMat.opacity = 0.28 + Math.sin(t * 2.5) * 0.06 + pk * 0.4;
       this.pads.forEach((p, s) => {
         const target = s === this.turnSeat ? 0.5 + Math.sin(t * 4) * 0.15 : 0;
         p.material.opacity += (target - p.material.opacity) * Math.min(1, dt * 6);

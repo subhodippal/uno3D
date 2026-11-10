@@ -55,6 +55,7 @@ export function normalizeCfg(c = {}) {
     stack: c.stack !== false,
     drawMode: c.drawMode === 'until' ? 'until' : 'one',
     callRule: c.callRule !== false,
+    boost: c.boost !== false, // action cards come up more often after every shuffle
   };
 }
 
@@ -77,13 +78,25 @@ function shuffle(a) {
   return a;
 }
 
+// Weighted shuffle: Skip, Reverse, +2, Wild and Wild +4 are ACTION_WEIGHT times as likely as a
+// number card to sit near the top of the pile (cards are drawn from the end of the array).
+export const ACTION_WEIGHT = 2.5;
+function deal(ids, boost) {
+  if (!boost) return shuffle(ids);
+  const key = (id) => {
+    const r = (rnd(1e9) + 1) / (1e9 + 1);
+    return Math.pow(r, 1 / (isNumber(id) ? 1 : ACTION_WEIGHT));
+  };
+  return ids.map((id) => [key(id), id]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
+}
+
 // ---------------------------------------------------------------- game
 export function newGame(cfgIn, { round = 1, scores = null, starter = 0 } = {}) {
   const cfg = normalizeCfg(cfgIn);
   const np = cfg.np;
   const G = {
     cfg, np,
-    deck: shuffle(DECK.map((_, i) => i)),
+    deck: deal(DECK.map((_, i) => i), cfg.boost),
     discard: [],
     hands: Array.from({ length: np }, () => []),
     color: 0, turn: starter % np, dir: 1,
@@ -139,7 +152,7 @@ function draw(G, seat, n, why) {
     if (!G.deck.length) {
       if (G.discard.length <= 1) break;
       const t = G.discard.pop();
-      G.deck = shuffle(G.discard);
+      G.deck = deal(G.discard, G.cfg.boost);
       G.discard = [t];
       G.evs.push({ t: 'shuffle' });
     }

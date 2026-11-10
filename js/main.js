@@ -5,8 +5,9 @@ import * as R from './rules.js';
 import { chooseAction } from './ai.js';
 import { sfx } from './audio.js';
 import * as bg from './bgfx.js';
-import { HostNet, ClientNet } from './net.js';
+import { HostNet, ClientNet, findMatch, findLowerTable } from './net.js';
 import { flushTweens } from './anim.js';
+import { view } from './view.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -27,8 +28,14 @@ const store = {
 };
 
 const lowEnd = (navigator.hardwareConcurrency || 4) <= 2;
-const settings = Object.assign({ sound: true, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
-sfx.enabled = settings.sound;
+const settings = Object.assign({ view: '3d', orient: 'auto', sound: true, voice: true, music: true, muted: false, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
+// the HUD speaker button mutes everything; the settings screen switches each part
+function applyAudio() {
+  sfx.enabled = settings.sound && !settings.muted;
+  sfx.voiceOn = settings.voice && !settings.muted;
+  sfx.setMusic(settings.music && !settings.muted);
+}
+applyAudio();
 sfx.vibrate = settings.vibrate;
 const cpuDelay = () => ({ relaxed: 1300, normal: 850, fast: 420 }[settings.speed] || 850);
 
@@ -36,7 +43,87 @@ const seatCss = (s) => R.SEATS[s].css;
 const avatar = (s, name) => `<span class="av" style="--c:${seatCss(s)}">${esc((name || '?').trim().charAt(0).toUpperCase() || '?')}</span>`;
 
 // ---------------------------------------------------------------- arena
+// ---------------------------------------------------------------- screen orientation
+const isTouch = matchMedia('(pointer: coarse)').matches;
+document.documentElement.classList.toggle('touch', isTouch);
+function updateRot() {
+  const physPortrait = window.innerHeight >= window.innerWidth;
+  const rot = isTouch && settings.orient !== 'auto' && (settings.orient === 'portrait') !== physPortrait;
+  const de = document.documentElement;
+  de.style.setProperty('--rot-w', window.innerHeight + 'px');
+  de.style.setProperty('--rot-h', window.innerWidth + 'px');
+  if (rot !== view.rot) {
+    view.rot = rot;
+    de.classList.toggle('rot', rot);
+    window.dispatchEvent(new Event('resize'));
+  }
+}
+window.addEventListener('resize', () => updateRot());
+window.addEventListener('orientationchange', () => setTimeout(updateRot, 200));
+// Turning the screen works whatever the phone's own rotation setting is:
+// 1. Android/Chrome: go fullscreen and lock the real screen rotation (this overrides the
+//    phone's auto-rotate switch, but needs a tap).
+// 2. If the lock isn't allowed (iPhone, some browsers, desktop-mode sites), the page itself is
+//    turned 90 degrees with CSS, so the game still shows in the chosen orientation.
+async function lockOrientation() {
+  if (!isTouch) return;
+  const so = screen.orientation;
+  try {
+    if (settings.orient === 'auto') { so?.unlock?.(); return; }
+    if (!so?.lock) return;
+    const de = document.documentElement;
+    const fs = de.requestFullscreen || de.webkitRequestFullscreen;
+    if (!document.fullscreenElement && !document.webkitFullscreenElement && fs) {
+      await Promise.resolve(fs.call(de, { navigationUI: 'hide' })).catch(() => {});
+    }
+    // don't wait forever on browsers that never settle the promise
+    await Promise.race([so.lock(settings.orient), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))]);
+    await new Promise((r) => setTimeout(r, 250)); // let the resize land
+  } catch { /* not allowed here: the CSS turn takes over */ } finally {
+    updateRot();
+  }
+}
+updateRot();
+window.addEventListener('pointerdown', () => { if (settings.orient !== 'auto') lockOrientation(); }, { once: true });
+
 const arena = new Arena($('#c'), { quality: settings.quality });
+arena.setFlat(settings.view === '2d');
+
+function syncViewChips() {
+  $$('[data-act="view"] .vlbl').forEach((b) => { b.textContent = settings.view === '2d' ? '2D' : '3D'; });
+  $$('[data-act="orient"]').forEach((b) => {
+    const land = view.w > view.h;
+    b.classList.toggle('land', land);
+    b.querySelector('.olbl').textContent = land ? 'Landscape' : 'Portrait';
+    b.setAttribute('aria-label', land ? 'Switch to portrait' : 'Switch to landscape');
+  });
+  $$('#segView button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.view));
+  $$('#segOrient button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.orient));
+}
+function setView(v) {
+  settings.view = v;
+  store.set(SET_KEY, settings);
+  arena.setFlat(v === '2d');
+  syncViewChips();
+}
+function setOrient(o) {
+  settings.orient = o;
+  store.set(SET_KEY, settings);
+  // try the real lock first; the CSS turn only kicks in if the phone refuses
+  lockOrientation().then(syncViewChips);
+  if (!screen.orientation?.lock || o === 'auto') updateRot();
+  syncViewChips();
+  toast(o === 'auto' ? 'Screen follows your phone' : `${o[0].toUpperCase() + o.slice(1)} mode`, 1400);
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  sfx.unlock(); sfx.click();
+  if (b.dataset.act === 'view') setView(settings.view === '2d' ? '3d' : '2d');
+  else if (b.dataset.act === 'orient') setOrient(view.w > view.h ? 'portrait' : 'landscape');
+});
+window.addEventListener('resize', () => syncViewChips());
+syncViewChips();
 arena._sfx = (name, arg) => sfx[name]?.(arg);
 // bottom safe-area inset (iPhone home bar), measured once from CSS env()
 const safeProbe = document.createElement('div');
@@ -49,7 +136,7 @@ function measureBottom() {
 window.addEventListener('resize', () => { measureBottom(); placeTags(); });
 
 // ---------------------------------------------------------------- screens
-const SCREENS = ['scrMenu', 'scrSetup', 'scrOnline', 'scrLobby', 'scrPass', 'scrRound', 'scrPause', 'scrSettings', 'scrHelp', 'scrMsg'];
+const SCREENS = ['scrMenu', 'scrSetup', 'scrOnline', 'scrSearch', 'scrLobby', 'scrPass', 'scrRound', 'scrPause', 'scrSettings', 'scrHelp', 'scrMsg'];
 let current = 'scrMenu';
 let overlayBack = null;
 function show(id) {
@@ -78,7 +165,7 @@ function message(title, text, after) {
 
 // ---------------------------------------------------------------- setup
 const setup = Object.assign({
-  mode: 'cpu', np: 4, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, level: 'normal',
+  mode: 'cpu', np: 4, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, boost: true, level: 'normal',
   kinds: ['human', 'cpu', 'cpu', 'cpu'], names: ['', '', '', ''],
 }, store.get(SETUP_KEY) || {});
 
@@ -91,7 +178,7 @@ function defaultName(s, kind, kinds) {
 function openSetup(mode) {
   setup.mode = mode;
   if (mode === 'cpu') setup.kinds = ['human', 'cpu', 'cpu', 'cpu'];
-  $('#setupTitle').textContent = mode === 'host' ? 'Room settings' : 'Play with bots';
+  $('#setupTitle').textContent = mode === 'host' ? 'Room settings' : 'Single play';
   $('#btnStart').textContent = mode === 'host' ? 'Create room' : 'Start game';
   $('#setupErr').textContent = '';
   renderSetup();
@@ -107,6 +194,7 @@ function renderSetup() {
   $('#optStack').checked = setup.stack;
   $('#optUntil').checked = setup.drawMode === 'until';
   $('#optCall').checked = setup.callRule;
+  $('#optBoost').checked = setup.boost !== false;
   const local = setup.mode !== 'host';
   $('#seatRows').classList.toggle('hidden', !local);
   if (local) {
@@ -126,7 +214,7 @@ function renderSetup() {
 }
 
 function saveSetup() {
-  store.set(SETUP_KEY, { np: setup.np, hand: setup.hand, target: setup.target, stack: setup.stack, drawMode: setup.drawMode, callRule: setup.callRule, level: setup.level, names: setup.names });
+  store.set(SETUP_KEY, { np: setup.np, hand: setup.hand, target: setup.target, stack: setup.stack, drawMode: setup.drawMode, callRule: setup.callRule, boost: setup.boost, level: setup.level, names: setup.names });
 }
 
 const segPick = (sel, key) => $(sel).addEventListener('click', (e) => {
@@ -140,6 +228,7 @@ segPick('#segLevel', 'level');
 $('#optStack').addEventListener('change', (e) => { sfx.click(); setup.stack = e.target.checked; });
 $('#optUntil').addEventListener('change', (e) => { sfx.click(); setup.drawMode = e.target.checked ? 'until' : 'one'; });
 $('#optCall').addEventListener('change', (e) => { sfx.click(); setup.callRule = e.target.checked; });
+$('#optBoost').addEventListener('change', (e) => { sfx.click(); setup.boost = e.target.checked; });
 $('#seatRows').addEventListener('click', (e) => {
   const b = e.target.closest('.kind button'); if (!b) return;
   sfx.click();
@@ -328,11 +417,11 @@ function popWord(text, x, y, css = '#fff') {
 function seatPoint(s) {
   const p = arena.seatScreen(s);
   if (p) return p;
-  return { x: innerWidth / 2, y: innerHeight - arena.handBottomPx - 150 };
+  return { x: view.w / 2, y: view.h - arena.handBottomPx - 150 };
 }
 function pileWord(text, css) {
   const p = arena.pileScreen();
-  popWord(text, innerWidth / 2, Math.max(120, p.y - 30), css);
+  popWord(text, view.w / 2, Math.max(120, p.y - 30), css);
 }
 
 async function animateEvent(ev, V, idx) {
@@ -341,28 +430,46 @@ async function animateEvent(ev, V, idx) {
     case 'play': {
       const c = R.card(ev.card);
       const p = await arena.playCard(ev.seat, ev.card);
-      arena.setTable({ dir: V.dir, color: ev.color, turn: V.turn, over: V.over });
-      updateColorTag(ev.color, V.dir);
+      arena.setTable({ dir: arena.dir, color: ev.color, turn: V.turn, over: V.over });
+      updateColorTag(ev.color, arena.dir);
       sfx.thwack(typeof c.v === 'number' ? 0.8 : 1.2);
       arena.cardFx(p, ev.card, ev.color);
       const css = R.COLORS[ev.color].css;
+      const cname = R.COLORS[ev.color].name;
       if (c.v === 'wild' || c.v === 'w4') {
         sfx.wild();
         bg.flash(css);
         R.COLORS.forEach((cc, i) => setTimeout(() => bg.launch(cc.css, 1, 0.75, true), i * 120));
-        pileWord(c.v === 'w4' ? `+4 · ${R.COLORS[ev.color].name}!` : `${R.COLORS[ev.color].name}!`, css);
-        if (c.v === 'w4') { setTimeout(() => sfx.punch(), 120); setTimeout(() => sfx.plus(4), 260); }
-      } else if (c.v === 'd2') { sfx.punch(); setTimeout(() => sfx.plus(2), 120); pileWord('+2!', css); bg.launch(css, 2, 0.7, true); }
-      else if (c.v === 'rev') { sfx.reverse(); pileWord('REVERSE!', css); }
-      else if (c.v === 'skip') { sfx.punch(); }
+        if (c.v === 'w4') {
+          callout(`+4 ${cname.toUpperCase()}!`, `${name(ev.seat)} · Pick 4 · colour is now ${cname}`, css, ['pick4', cname.toLowerCase()]);
+          setTimeout(() => sfx.punch(), 120); setTimeout(() => sfx.plus(4), 260);
+        } else callout(`${cname.toUpperCase()}!`, `${name(ev.seat)} · Colour card`, css, ['colorcard', cname.toLowerCase()]);
+      } else if (c.v === 'd2') {
+        sfx.punch(); setTimeout(() => sfx.plus(2), 120); bg.launch(css, 2, 0.7, true);
+        callout('PICK 2!', `${name(ev.seat)} · +2 cards`, css, 'pick2');
+      } else if (c.v === 'rev') sfx.reverse();
+      else if (c.v === 'skip') { sfx.punch(); callout('SKIP!', `${name(ev.seat)} · next player misses a turn`, css); }
+      break;
+    }
+    case 'rev': {
+      const css = R.COLORS[V.color]?.css || '#8a5cff';
+      arena.setTable({ dir: ev.dir, color: arena.color, turn: V.turn, over: V.over });
+      updateColorTag(arena.color, ev.dir, true);
+      const way = ev.dir > 0 ? 'Clockwise' : 'Anticlockwise';
+      // let a "Last card!" shout finish first
+      const wait = V.evs.some((e) => e.t === 'last' && e.seat !== undefined) ? 900 : 0;
+      setTimeout(() => callout(`REVERSE ${ev.dir > 0 ? '↻' : '↺'}`, `Play now goes ${way.toLowerCase()}`, css, 'reverse', true), wait);
+      await sleep(350);
       break;
     }
     case 'draw': {
+      if (ev.why === 'draw') sfx.voice('draw');
       await arena.drawCards(ev.seat, ev.n, ev.cards);
       if (ev.why === 'call') {
+        sfx.voice('forgot', { queue: true });
         const pt = seatPoint(ev.seat);
         popWord('FORGOT! +2', pt.x, pt.y, '#ff5d7a');
-        toast(`${name(ev.seat)} forgot to call Color Card! and draws 2`, 2600);
+        toast(`${name(ev.seat)} forgot to call Last card! and draws 2`, 2600);
         sfx.error();
       } else if (ev.why === 'stack' && ev.n >= 2) {
         const pt = seatPoint(ev.seat);
@@ -380,6 +487,7 @@ async function animateEvent(ev, V, idx) {
     }
     case 'skip': {
       sfx.skip();
+      sfx.voice('skip', { queue: true });
       const pt = seatPoint(ev.seat);
       popWord('SKIPPED', pt.x, pt.y, '#ff5d7a');
       arena.seatFx(ev.seat, 0xff5d7a);
@@ -389,16 +497,18 @@ async function animateEvent(ev, V, idx) {
     case 'pass': {
       const pt = seatPoint(ev.seat);
       popWord('PASS', pt.x, pt.y, '#a49cc8');
+      sfx.voice('pass');
       break;
     }
     case 'call':
     case 'last': {
       if (ev.t === 'last' && V.evs.some((e) => e.t === 'call')) break;
       sfx.call();
-      setTimeout(() => sfx.say('Color Card!'), 120);
+      // you already heard it when you pressed the button
+      if (!(ev.seat === V.viewer && performance.now() - saidLast < 3000)) sfx.voice('last', { queue: ev.t === 'last' });
       setTimeout(() => sfx.boom(), 200);
       const css = seatCss(ev.seat);
-      showBanner('COLOR CARD!', name(ev.seat), css, 1500);
+      showBanner('LAST CARD!', name(ev.seat), css, 1500);
       bg.launch(css, 4, 0.9);
       arena.shake(0.25);
       arena.seatFx(ev.seat, R.SEATS[ev.seat].hex, true);
@@ -409,12 +519,24 @@ async function animateEvent(ev, V, idx) {
   }
 }
 
-function updateColorTag(color, dir) {
+// HUD badge: a circular arrow in the current colour that turns the way play goes
+const DIR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2A8.8 8.8 0 1 1 4.4 7.6"/><polygon points="6.2,3.4 7.2,9.2 1.6,6.8"/></svg>';
+function updateColorTag(color, dir, flip = false) {
   const el = $('#colorTag');
   if (color == null || color < 0) { el.innerHTML = ''; return; }
-  el.style.setProperty('--c', R.COLORS[color].css);
-  el.innerHTML = `<i></i>${R.COLORS[color].name}<span class="dir" title="Direction">${dir > 0 ? '↻' : '↺'}</span>`;
-  document.documentElement.style.setProperty('--turn', R.COLORS[color].css);
+  const c = R.COLORS[color];
+  const changed = el.dataset.c !== String(color) || el.dataset.d !== String(dir);
+  el.dataset.c = color; el.dataset.d = dir;
+  el.style.setProperty('--c', c.css);
+  el.innerHTML = `<i class="dirc ${dir > 0 ? 'cw' : 'ccw'}">${DIR_SVG}</i><span class="ct"><b>${c.name}</b><small>${dir > 0 ? 'Clockwise' : 'Anticlockwise'}</small></span>`;
+  if (changed || flip) { el.classList.remove('bump', 'flip'); void el.offsetWidth; el.classList.add(flip ? 'flip' : 'bump'); }
+  document.documentElement.style.setProperty('--turn', c.css);
+}
+
+// big highlighted text + spoken call-out for action cards
+function callout(title, sub, css, voice, queue = false) {
+  showBanner(title, sub, css, 1300);
+  if (voice) sfx.voice(voice, { queue });
 }
 
 function renderTags(V) {
@@ -448,8 +570,8 @@ function placeTags() {
     const p = arena.seatScreen(+el.dataset.seat);
     if (!p) return;
     const w = el.offsetWidth / 2 + 8;
-    el.style.left = Math.max(w, Math.min(innerWidth - w, p.x)) + 'px';
-    el.style.top = Math.max(90, Math.min(innerHeight - 120, p.y)) + 'px';
+    el.style.left = Math.max(w, Math.min(view.w - w, p.x)) + 'px';
+    el.style.top = Math.max(90, Math.min(view.h - 120, p.y)) + 'px';
   });
 }
 arena.onLayout = () => { placeTags(); document.documentElement.style.setProperty('--hand-top', Math.round(arena.handTopPx()) + 'px'); };
@@ -471,7 +593,7 @@ function setTurnUI(V) {
   const showCount = me >= 0 && !hidden();
   $('#status').innerHTML = `<span class="av" style="--c:${seatCss(V.turn)}"></span><span class="${mine ? '' : 'dots'}">${esc(text)}</span>${showCount ? `<small style="opacity:.6;margin-left:4px">· ${V.my.length}</small>` : ''}`;
   updateButtons(V, ids);
-  if (mine && shown.prevTurn !== me) { sfx.turn(); sfx.buzz(25); }
+  if (mine && shown.prevTurn !== me) { sfx.turn(); sfx.buzz(25); if (!hidden()) sfx.voice('turn', { queue: true }); }
   shown.prevTurn = V.turn;
 }
 
@@ -503,6 +625,7 @@ async function showOutcome(V) {
   showBanner(champ ? (iWon && (S.mode !== 'local' || humans() === 1) ? 'Champion!' : `${S.seats[w].name} takes it`) : winnerTitle(w), `+${V.over.pts} points`, css, 2600);
   arena.celebrate(w);
   sfx.boom();
+  sfx.voice(iWon && (S.mode !== 'local' || humans() === 1) ? 'youwin' : 'winner', { queue: true });
   if (lost) { setTimeout(() => sfx.lose(), 350); bg.launch(css, 4, 0.85, true); } else {
     setTimeout(() => sfx.win(), 250);
     setTimeout(() => sfx.cheer(), 500);
@@ -561,6 +684,7 @@ function showBanner(title, sub, css, ms = 2600) {
   b.classList.remove('hidden', 'out');
   const bb = b.querySelector('b');
   bb.textContent = title;
+  bb.classList.toggle('long', title.length > 8);
   bb.style.setProperty('--c', css || '#8a5cff');
   b.querySelector('small').textContent = sub || '';
   bb.style.animation = 'none'; void bb.offsetWidth; bb.style.animation = '';
@@ -644,7 +768,13 @@ arena.onDeck = () => {
   submit({ type: 'draw' });
 };
 $('#btnDraw').addEventListener('click', () => { sfx.unlock(); sfx.click(); arena.onDeck(); });
-$('#btnLast').addEventListener('click', () => { sfx.unlock(); submit({ type: 'call' }); });
+let saidLast = -1e9;
+$('#btnLast').addEventListener('click', () => {
+  sfx.unlock();
+  sfx.voice('last'); // straight away, inside the tap, so phones allow the sound
+  saidLast = performance.now();
+  submit({ type: 'call' });
+});
 
 $('#swatches').innerHTML = R.COLORS.map((c, i) => `<button data-c="${i}" style="--c:${c.css}">${c.name}<small></small></button>`).join('');
 function openPicker(id) {
@@ -702,12 +832,14 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------- HUD buttons
-function syncSoundBtn() { $('#btnSound').classList.toggle('muted', !settings.sound); }
+function syncSoundBtn() { $('#btnSound').classList.toggle('muted', settings.muted || !(settings.sound || settings.voice || settings.music)); }
 syncSoundBtn();
 $('#btnSound').addEventListener('click', () => {
-  settings.sound = !settings.sound;
-  sfx.enabled = settings.sound;
+  const allOff = settings.muted || !(settings.sound || settings.voice || settings.music);
+  settings.muted = !allOff;
+  if (allOff) { if (!settings.sound && !settings.voice && !settings.music) Object.assign(settings, { sound: true, voice: true, music: true }); }
   sfx.unlock();
+  applyAudio();
   store.set(SET_KEY, settings);
   syncSoundBtn();
   sfx.click();
@@ -769,6 +901,8 @@ function flyEmoji(seat, e) {
 function goMenu() {
   clearTimeout(cpuTimer);
   clearTimeout(guestTimer);
+  stopSearch();
+  endMatchmaking();
   if (S?.net) { try { S.net.close(); } catch { /* ignore */ } }
   S = null;
   paused = false;
@@ -796,7 +930,8 @@ function refreshMenu() {
 }
 
 $('#btnVsCpu').addEventListener('click', () => { sfx.unlock(); sfx.click(); openSetup('cpu'); });
-$('#btnOnline').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline(); });
+$('#btnGroup').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline('', 'group'); });
+$('#btnOnline').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline('', 'online'); });
 $('#btnContinue').addEventListener('click', () => {
   sfx.unlock(); sfx.click();
   const sv = store.get(SAVE_KEY);
@@ -808,14 +943,29 @@ $$('[data-back]').forEach((b) => b.addEventListener('click', () => { sfx.click()
 // settings
 function openSettings() {
   $('#setSound').checked = settings.sound;
+  $('#setVoice').checked = settings.voice;
+  $('#setMusic').checked = settings.music;
   $('#setVibrate').checked = settings.vibrate;
   $$('#segQuality button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.quality));
+  syncViewChips();
   $$('#segSpeed button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.speed));
   overlay('scrSettings');
 }
 $('#btnSettings').addEventListener('click', () => { sfx.unlock(); sfx.click(); openSettings(); });
-$('#setSound').addEventListener('change', (e) => { settings.sound = e.target.checked; sfx.enabled = settings.sound; store.set(SET_KEY, settings); syncSoundBtn(); sfx.click(); });
+function setAudio(key, on) {
+  settings[key] = on;
+  if (on) settings.muted = false;
+  sfx.unlock();
+  applyAudio();
+  store.set(SET_KEY, settings);
+  syncSoundBtn();
+}
+$('#setSound').addEventListener('change', (e) => { setAudio('sound', e.target.checked); sfx.click(); });
+$('#setVoice').addEventListener('change', (e) => { setAudio('voice', e.target.checked); if (e.target.checked) sfx.voice('last'); });
+$('#setMusic').addEventListener('change', (e) => setAudio('music', e.target.checked));
 $('#setVibrate').addEventListener('change', (e) => { settings.vibrate = e.target.checked; sfx.vibrate = settings.vibrate; store.set(SET_KEY, settings); sfx.buzz(30); });
+$('#segView').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { sfx.click(); setView(b.dataset.v); } });
+$('#segOrient').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { sfx.click(); setOrient(b.dataset.v); } });
 $('#segQuality').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   sfx.click();
@@ -846,9 +996,9 @@ function openHelp() {
       <i>+4</i><span><b>Wild +4</b>: pick the colour, the next player draws 4 and misses a turn${c.stack ? ' (or stacks a +4)' : ''}.</span>
     </div>
     <p><b>Drawing:</b> ${c.drawMode === 'until' ? 'keep drawing until you get a card you can play' : 'draw one card'}. If it fits you can play it straight away, or pass.</p>
-    ${c.callRule ? '<p><b>Color Card!</b> When you have two cards and are about to play one, tap the yellow <b>Color Card!</b> button first (everyone hears you shout it). Forget, and you draw 2 as a penalty.</p>' : ''}
+    ${c.callRule ? '<p><b>Last card!</b> When you have two cards and are about to play one, tap the big yellow <b>Last card!</b> button first (everyone hears you shout it). Forget, and you draw 2 as a penalty.</p>' : ''}
     <p><b>Scoring:</b> the round winner scores the cards left in everyone else's hands. Numbers count face value, action cards 20 and wilds 50. ${c.target ? `First to <b>${c.target}</b> points wins the match.` : 'Free play: points keep adding up.'}</p>
-    <p><b>Controls:</b> tap a raised card, or <b>swipe it up</b>, to throw it. <b>Press and hold</b> a card to look at it closely, and tap the discard pile to see its top card. Tap the deck or <b>Draw</b> if nothing fits. Keyboard: Space draws or passes, 1–9 plays your playable cards in order, C calls Color Card!, Esc opens the menu.</p>`;
+    <p><b>Controls:</b> tap a raised card, or <b>swipe it up</b>, to throw it. <b>Press and hold</b> a card to look at it closely, and tap the discard pile to see its top card. Tap the deck or <b>Draw</b> if nothing fits. Keyboard: Space draws or passes, 1–9 plays your playable cards in order, C or L calls Last card!, Esc opens the menu.</p>`;
   overlay('scrHelp');
 }
 $('#btnHelp').addEventListener('click', () => { sfx.unlock(); sfx.click(); openHelp(); });
@@ -861,7 +1011,11 @@ function myName() {
   store.set(NAME_KEY, v);
   return v;
 }
-function openOnline(code = '') {
+let onlineView = 'online';
+function openOnline(code = '', view = code ? 'group' : onlineView) {
+  onlineView = view;
+  $('#scrOnline').dataset.view = view;
+  $('#onlineTitle').textContent = view === 'group' ? 'Group play' : 'Online match';
   $('#inpName').value = store.get(NAME_KEY) || '';
   $('#inpCode').value = code;
   $('#onlineMsg').textContent = '';
@@ -892,6 +1046,10 @@ $('#btnLobbyLeave').addEventListener('click', () => { sfx.click(); goMenu(); });
 
 function renderLobby() {
   if (!S) return;
+  const mm = !!S.mm;
+  $('#lobbyTitle').textContent = mm ? '⚡ Quick match' : 'Room';
+  $('#lobbyCodeBox').classList.toggle('hidden', mm);
+  $('#lobbyShareRow').classList.toggle('hidden', mm);
   $('#lobbyCode').textContent = S.code;
   $('#lobbyRule').textContent = `${R.describe(S.cfg)} · ${S.cfg.np} players`;
   $('#lobbySeats').innerHTML = S.seats.map((s, i) => {
@@ -902,6 +1060,8 @@ function renderLobby() {
   const isHost = S.mode === 'host';
   const empty = S.seats.filter((s) => s.kind === 'open').length;
   $('#btnLobbyStart').classList.toggle('hidden', !isHost);
+  $('#btnLobbyStart').textContent = mm ? 'Play now · bots fill empty seats' : 'Start game';
+  if (mm) { $('#lobbyNote').textContent = S.mmNote || (isHost ? 'Waiting for players…' : 'Waiting for the game to start…'); return; }
   $('#lobbyNote').textContent = isHost
     ? (empty ? `Share the code. ${empty === 1 ? 'An empty seat' : 'Empty seats'} will be played by the computer.` : 'Everyone is here!')
     : 'Waiting for the host to start…';
@@ -981,16 +1141,17 @@ function wireHost(net) {
   net.on('error', (m) => toast(m, 3000));
 }
 
-$('#btnLobbyStart').addEventListener('click', () => {
-  sfx.unlock(); sfx.click();
-  if (S?.mode !== 'host') return;
+$('#btnLobbyStart').addEventListener('click', () => { sfx.unlock(); sfx.click(); startOnlineGame(); });
+function startOnlineGame() {
+  if (S?.mode !== 'host' || S.started) return;
+  endMatchmaking();
   S.seats = S.seats.map((s, i) => (s.kind === 'open' ? { name: `Bot ${i + 1}`, kind: 'cpu' } : s));
   S.started = true;
   S.G = R.newGame(S.cfg, { starter: Math.floor(Math.random() * S.cfg.np) });
   S.net.broadcast({ t: 'start', cfg: S.cfg, seats: pubSeats(), code: S.code });
   broadcastState();
   enterGame();
-});
+}
 
 // every guest gets their own view (other hands stay secret)
 function broadcastState() {
@@ -1000,8 +1161,9 @@ function broadcastState() {
 }
 
 // ----- guest
-async function guestJoin() {
-  const code = $('#inpCode').value.trim().toUpperCase();
+async function guestJoin(codeArg, opts = {}) {
+  const code = String(typeof codeArg === 'string' ? codeArg : $('#inpCode').value).trim().toUpperCase();
+  if (opts.mm) return mmJoin(code, opts.mm);
   if (code.length !== 5) { $('#onlineMsg').textContent = 'Enter the 5-letter room code.'; return; }
   const name = myName();
   const btn = $('#btnJoin');
@@ -1056,22 +1218,176 @@ function wireGuest(net) {
       case 'emoji':
         if (msg.seat !== S.mySeat) flyEmoji(msg.seat, msg.e);
         break;
-      case 'reject':
+      case 'mm':
+        S.mmNote = String(msg.note || '').slice(0, 120);
+        if (current === 'scrLobby') renderLobby();
+        break;
+      case 'reject': {
+        const mm = S.mm;
         S.net.close();
         S = null;
+        if (mm) { toast('That table just filled up. Searching again…', 2200); quickMatch(mm.np); break; }
         message('Can’t join', msg.msg || 'Room unavailable', () => openOnline());
         break;
+      }
       default:
     }
   });
   net.on('close', () => {
     if (!S || S.net !== net) return;
+    const mm = S.mm && !S.started ? S.mm : null;
     S = null;
+    if (mm) { toast('The host left. Searching again…', 2200); quickMatch(mm.np); return; }
     $('#hud').classList.add('hidden');
     $('#tags').innerHTML = '';
     message('Room closed', 'The host left the game.');
   });
   net.on('error', (m) => toast(m, 3000));
+}
+
+// ---------------------------------------------------------------- quick match
+const MM_KEY = 'last3d-mm-np';
+const MM_WAIT = 30; // seconds a table waits for more players before bots fill in
+const mmCfg = (np) => R.normalizeCfg({ np, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, boost: true });
+let mmNp = [2, 3, 4].includes(store.get(MM_KEY)) ? store.get(MM_KEY) : 4;
+let mmToken = 0;
+let mmTicker = null;
+let searchClock = null;
+
+function renderMmPick() { $$('#mmPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === mmNp)); }
+renderMmPick();
+$('#mmPlayers').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  sfx.click(); mmNp = +b.dataset.v; store.set(MM_KEY, mmNp); renderMmPick();
+});
+$('#btnQuick').addEventListener('click', () => { sfx.unlock(); sfx.click(); myName(); quickMatch(mmNp); });
+$('#btnSearchCancel').addEventListener('click', () => { sfx.click(); stopSearch(); openOnline(); });
+
+function stopSearch() { mmToken++; clearInterval(searchClock); }
+
+async function quickMatch(np) {
+  stopSearch();
+  const tok = ++mmToken;
+  const alive = () => tok === mmToken;
+  const t0 = Date.now();
+  $('#searchMsg').textContent = `Looking for a ${np}-player table`;
+  $('#searchTime').textContent = '0:00';
+  searchClock = setInterval(() => {
+    const sec = Math.floor((Date.now() - t0) / 1000);
+    $('#searchTime').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  }, 1000);
+  show('scrSearch');
+  try {
+    const r = await findMatch(np, {
+      cancelled: () => !alive(),
+      onStatus: (i) => { if (alive()) $('#searchMsg').textContent = `Looking for a ${np}-player table · checking table ${i + 1}`; },
+    });
+    if (!r || !alive()) { r?.host?.destroy(); return; }
+    clearInterval(searchClock);
+    if (r.host) await hostMatch(r.host, np, r.slot);
+    else await mmJoin(r.join, np);
+  } catch (e) {
+    if (!alive()) return;
+    clearInterval(searchClock);
+    message('No match right now', e.message || 'Could not reach the matchmaking server.', () => openOnline());
+  }
+}
+
+// we claimed an empty table: open a room and keep the beacon up until it starts
+async function hostMatch(beacon, np, slot = 0) {
+  const net = new HostNet();
+  let code;
+  try { code = await net.start(); } catch (e) { beacon.destroy(); net.close(); throw e; }
+  const seats = Array.from({ length: np }, (_, i) => (i === 0 ? { name: store.get(NAME_KEY) || 'Host', kind: 'human', host: true } : { name: '', kind: 'open' }));
+  S = { mode: 'host', net, code, cfg: mmCfg(np), seats, level: 'normal', mySeat: 0, started: false, G: null, mm: { np, beacon, slot, since: Date.now(), fullAt: 0 } };
+  wireHost(net);
+  const answer = (conn) => {
+    const reply = () => {
+      const ok = S?.mm?.beacon === beacon && !S.started && S.seats.some((x) => x.kind === 'open');
+      try { conn.send(ok ? { t: 'room', code } : { t: 'full' }); } catch { /* ignore */ }
+      setTimeout(() => { try { conn.close(); } catch { /* ignore */ } }, 2500);
+    };
+    if (conn.open) reply(); else conn.on('open', reply);
+  };
+  // answer anyone who knocked while the room was being created, then everyone else directly
+  const queued = beacon.mmQueue || [];
+  beacon.mmQueue = null;
+  queued.forEach(answer);
+  beacon.on('connection', answer);
+  beacon.on('disconnected', () => { if (!beacon.destroyed) beacon.reconnect(); });
+  beacon.on('error', () => {});
+  renderLobby();
+  show('scrLobby');
+  sfx.pop();
+  clearInterval(mmTicker);
+  mmTicker = setInterval(mmTick, 1000);
+  mmTick();
+}
+
+function mmTick() {
+  if (!S?.mm || S.mode !== 'host' || S.started) { clearInterval(mmTicker); return; }
+  const now = Date.now();
+  const humans = S.seats.filter((x) => x.kind !== 'open').length;
+  const empty = S.seats.length - humans;
+  const waited = Math.floor((now - S.mm.since) / 1000);
+  let note;
+  if (!empty) {
+    if (!S.mm.fullAt) S.mm.fullAt = now;
+    const left = 3 - Math.floor((now - S.mm.fullAt) / 1000);
+    if (left <= 0) { startOnlineGame(); return; }
+    note = `Everyone's here! Starting in ${left}…`;
+  } else {
+    S.mm.fullAt = 0;
+    if (humans >= 2) {
+      const left = MM_WAIT - waited;
+      if (left <= 0) { startOnlineGame(); return; }
+      note = `${humans} players found · starting in ${left}s (bots fill ${empty === 1 ? 'the empty seat' : 'empty seats'})`;
+    } else {
+      note = `Waiting for players… ${Math.floor(waited / 60)}:${String(waited % 60).padStart(2, '0')}`;
+      maybeMergeDown();
+    }
+  }
+  S.mmNote = note;
+  S.net.broadcast({ t: 'mm', note });
+  if (current === 'scrLobby') renderLobby();
+}
+
+// alone at a higher table? if someone is waiting at a lower one, close ours and join theirs
+function maybeMergeDown() {
+  const mm = S?.mm;
+  if (!mm || !mm.slot || mm.merging || Date.now() - (mm.lastMerge || 0) < 6000) return;
+  mm.merging = true;
+  mm.lastMerge = Date.now();
+  findLowerTable(mm.np, mm.slot).then((code) => {
+    mm.merging = false;
+    const alone = S?.mm === mm && !S.started && S.seats.filter((x) => x.kind !== 'open').length === 1;
+    if (!code || !alone) return;
+    endMatchmaking();
+    try { S.net.close(); } catch { /* ignore */ }
+    S = null;
+    show('scrSearch');
+    mmJoin(code, mm.np);
+  });
+}
+
+function endMatchmaking() {
+  clearInterval(mmTicker);
+  if (S?.mm?.beacon) { try { S.mm.beacon.destroy(); } catch { /* ignore */ } S.mm.beacon = null; }
+}
+
+// a beacon pointed us at a room: join it, and go back to searching if that fails
+async function mmJoin(code, np) {
+  const net = new ClientNet();
+  $('#searchMsg').textContent = 'Table found! Joining…';
+  try {
+    await net.join(code);
+    S = { mode: 'guest', net, code, cfg: null, seats: [], mySeat: -1, V: null, mm: { np } };
+    wireGuest(net);
+    net.send({ t: 'hello', name: store.get(NAME_KEY) || 'Player' });
+  } catch {
+    net.close();
+    quickMatch(np);
+  }
 }
 
 // ---------------------------------------------------------------- menu demo
@@ -1148,4 +1464,4 @@ const roomParam = new URLSearchParams(location.search).get('room');
 if (roomParam) openOnline(roomParam.toUpperCase().slice(0, 5));
 
 // handy for debugging from the console
-window.__last = { arena, R, get S() { return S; } };
+window.__last = { arena, R, sfx, animateEvent, get S() { return S; } };
