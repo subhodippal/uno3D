@@ -91,7 +91,7 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log('\n  Color Card 3D is running:\n');
+  console.log('\n  UNO 3D is running:\n');
   console.log(`    Local:    http://localhost:${PORT}`);
   for (const list of Object.values(os.networkInterfaces())) {
     for (const a of list || []) {

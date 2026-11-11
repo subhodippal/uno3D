@@ -26,7 +26,7 @@ export function chooseAction(G, seat, level = 'normal') {
   const hand = G.hands[seat];
   // a Flip turned up a colour card: pick the colour
   if (G.awaitColor) return { type: 'color', color: level === 'easy' && Math.random() < 0.4 ? Math.floor(Math.random() * 4) : bestColor(G, hand) };
-  // say "last card" before playing down to one (easier bots sometimes forget)
+  // say "uno" before playing down to one (easier bots sometimes forget)
   if (hand.length === 2 && !G.called[seat] && hand.some((id) => playable(G, id, seat))) {
     const remember = { easy: 0.6, normal: 0.88, hard: 1 }[level] ?? 0.9;
     if (Math.random() < remember) return { type: 'call' };

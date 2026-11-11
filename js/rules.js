@@ -7,7 +7,7 @@
 //             (+1, Wild +2); a Flip card turns everything over to the dark side, which has
 //             harsher cards (+5, Skip Everyone, Wild Draw Colour) and its own four colours.
 
-export const GAME_NAME = 'Color Card 3D';
+export const GAME_NAME = 'UNO';
 
 export const COLORS = [
   { name: 'Red', css: '#e53935', hex: 0xe53935 },
@@ -348,7 +348,7 @@ export function act(G, seat, a) {
   G.color = c.c === WILD ? +a.color : c.c;
   evs.push({ t: 'play', seat, card: id, color: G.color, v: c.v, side: G.side });
 
-  // last card call
+  // UJNO call
   if (hand.length === 1) {
     if (G.cfg.callRule && !G.called[seat]) draw(G, seat, 2, 'call');
     else evs.push({ t: 'last', seat });

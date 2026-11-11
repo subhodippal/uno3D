@@ -494,7 +494,7 @@ async function animateEvent(ev, V, idx) {
       arena.setTable({ dir: ev.dir, color: arena.color, turn: V.turn, over: V.over, side: arena.side });
       updateColorTag(arena.color, ev.dir, true, arena.side);
       const way = ev.dir > 0 ? 'Clockwise' : 'Anticlockwise';
-      // let a "Last card!" shout finish first
+      // let a "UNO!" shout finish first
       const wait = V.evs.some((e) => e.t === 'last' && e.seat !== undefined) ? 900 : 0;
       setTimeout(() => callout(`REVERSE ${ev.dir > 0 ? '↻' : '↺'}`, `Play now goes ${way.toLowerCase()}`, css, 'reverse', true), wait);
       await sleep(350);
@@ -507,7 +507,7 @@ async function animateEvent(ev, V, idx) {
         sfx.voice('forgot', { queue: true });
         const pt = seatPoint(ev.seat);
         popWord('FORGOT! +2', pt.x, pt.y, '#ff5d7a');
-        toast(`${name(ev.seat)} forgot to call Last card! and draws 2`, 2600);
+        toast(`${name(ev.seat)} forgot to call UNO! and draws 2`, 2600);
         sfx.error();
       } else if (ev.why === 'color') {
         const pt = seatPoint(ev.seat);
@@ -547,10 +547,10 @@ async function animateEvent(ev, V, idx) {
       if (ev.t === 'last' && V.evs.some((e) => e.t === 'call')) break;
       sfx.call();
       // you already heard it when you pressed the button
-      if (!(ev.seat === V.viewer && performance.now() - saidLast < 3000)) sfx.voice('last', { queue: ev.t === 'last' });
+      if (!(ev.seat === V.viewer && performance.now() - saidLast < 3000)) sfx.voice('uno', { queue: ev.t === 'uno' });
       setTimeout(() => sfx.boom(), 200);
       const css = seatCss(ev.seat);
-      showBanner('LAST CARD!', name(ev.seat), css, 1500);
+      showBanner('UNO!', name(ev.seat), css, 1500);
       bg.launch(css, 4, 0.9);
       arena.shake(0.25);
       arena.seatFx(ev.seat, R.SEATS[ev.seat].hex, true);
@@ -819,7 +819,7 @@ $('#btnDraw').addEventListener('click', () => { sfx.unlock(); sfx.click(); arena
 let saidLast = -1e9;
 $('#btnLast').addEventListener('click', () => {
   sfx.unlock();
-  sfx.voice('last'); // straight away, inside the tap, so phones allow the sound
+  sfx.voice('uno'); // straight away, inside the tap, so phones allow the sound
   saidLast = performance.now();
   submit({ type: 'call' });
 });
@@ -1025,7 +1025,7 @@ function setAudio(key, on) {
   syncSoundBtn();
 }
 $('#setSound').addEventListener('change', (e) => { setAudio('sound', e.target.checked); sfx.click(); });
-$('#setVoice').addEventListener('change', (e) => { setAudio('voice', e.target.checked); if (e.target.checked) sfx.voice('last'); });
+$('#setVoice').addEventListener('change', (e) => { setAudio('voice', e.target.checked); if (e.target.checked) sfx.voice('uno'); });
 $('#setMusic').addEventListener('change', (e) => setAudio('music', e.target.checked));
 $('#setVibrate').addEventListener('change', (e) => { settings.vibrate = e.target.checked; sfx.vibrate = settings.vibrate; store.set(SET_KEY, settings); sfx.buzz(30); });
 // how often special cards (Skip, Reverse, Pick 2/4, colour cards, Flip...) come up after a shuffle
@@ -1070,7 +1070,7 @@ function openHelp() {
   $('#helpBody').innerHTML = `
     <p>Be the first to <b>empty your hand</b>. Play a card that matches the top of the pile by <b>colour</b> or by <b>number / symbol</b>. If you can't, tap the draw pile.</p>
     ${c.mode === 'flip' ? `
-    <p><b>Color Card Flip:</b> every card has a <b>light side</b> (red, yellow, green, blue) and a <b>dark side</b> (pink, teal, orange, purple). You can see the other side of your opponents' cards and of the top of the draw pile.</p>
+    <p><b>UNO Flip:</b> every card has a <b>light side</b> (red, yellow, green, blue) and a <b>dark side</b> (pink, teal, orange, purple). You can see the other side of your opponents' cards and of the top of the draw pile.</p>
     <div class="legend">
       <i style="--violet:#1e6fd9">⟲</i><span><b>Flip</b>: everything turns over: every hand, the draw pile and the discard pile. The card that ends up on top sets the colour (if it's a colour card, the player who flipped picks).</span>
       <i style="--violet:#e53935">+1</i><span><b>Pick 1</b> (light): the next player draws 1 and misses a turn${c.stack ? ' (or stacks a +1 or Wild +2)' : ''}.</span>
@@ -1088,9 +1088,9 @@ function openHelp() {
       <i>+4</i><span><b>Pick 4</b>: pick the colour, the next player draws 4 and misses a turn${c.stack ? ' (or stacks a +4)' : ''}.</span>
     </div>`}
     <p><b>Drawing:</b> ${c.drawMode === 'until' ? 'keep drawing until you get a card you can play' : 'draw one card'}. If it fits you can play it straight away, or pass.</p>
-    ${c.callRule ? '<p><b>Last card!</b> When you have two cards and are about to play one, tap the big yellow <b>Last card!</b> button first (everyone hears you shout it). Forget, and you draw 2 as a penalty.</p>' : ''}
+    ${c.callRule ? '<p><b>UNO!</b> When you have two cards and are about to play one, tap the big yellow <b>UNO!</b> button first (everyone hears you shout it). Forget, and you draw 2 as a penalty.</p>' : ''}
     <p><b>Scoring:</b> the round winner scores the cards left in everyone else's hands. ${c.mode === 'flip' ? 'Numbers count face value; Pick 1 is 10, Reverse / Skip / Flip / Pick 5 are 20, Skip Everyone 30, colour cards 40, Wild Pick 2 50 and Wild Draw Colour 60.' : 'Numbers count face value, action cards 20 and colour cards 50.'} ${c.target ? `First to <b>${c.target}</b> points wins the match.` : 'Free play: points keep adding up.'}</p>
-    <p><b>Controls:</b> tap a raised card, or <b>swipe it up</b>, to throw it. <b>Press and hold</b> a card to look at it closely, and tap the discard pile to see its top card. Tap the deck or <b>Draw</b> if nothing fits. Keyboard: Space draws or passes, 1–9 plays your playable cards in order, C or L calls Last card!, Esc opens the menu.</p>`;
+    <p><b>Controls:</b> tap a raised card, or <b>swipe it up</b>, to throw it. <b>Press and hold</b> a card to look at it closely, and tap the discard pile to see its top card. Tap the deck or <b>Draw</b> if nothing fits. Keyboard: Space draws or passes, 1–9 plays your playable cards in order, C or L calls UNO!, Esc opens the menu.</p>`;
   overlay('scrHelp');
 }
 $('#btnHelp').addEventListener('click', () => { sfx.unlock(); sfx.click(); openHelp(); });
@@ -1353,10 +1353,10 @@ function renderMmPick() {
   $$('#mmPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === mmNp));
 }
 
-// ---------------------------------------------------------------- game tabs (main menu): Color Card / Color Card Flip
+// ---------------------------------------------------------------- game tabs (main menu): UNO / UNO Flip
 const GAME_INFO = {
-  classic: { name: 'Color Card', tag: 'Match the colour or number · first to empty their hand wins' },
-  flip: { name: 'Color Card Flip', tag: 'Two-sided cards · a Flip turns everything to the dark side' },
+  classic: { name: 'UNO', tag: 'Match the colour or number · first to empty their hand wins' },
+  flip: { name: 'UNO Flip', tag: 'Two-sided cards · a Flip turns everything to the dark side' },
 };
 function renderVariant() {
   const v = setup.variant === 'flip' ? 'flip' : 'classic';

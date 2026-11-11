@@ -2,11 +2,11 @@
 // (audio/voice/*.mp3, made with the public-domain Piper "John" voice).
 
 export const VOICE_CLIPS = {
-  last: 'Last card!', skip: 'Skipped!', reverse: 'Reverse!', colorcard: 'Color card!',
+  uno: 'Uno!', skip: 'Skipped!', reverse: 'Reverse!', colorcard: 'UNO!',
   red: 'Red!', green: 'Green!', yellow: 'Yellow!', blue: 'Blue!',
   pick2: 'Pick two!', pick4: 'Pick four!', draw: 'Draw card!', pass: 'Pass.',
   turn: 'Your turn!', youwin: 'You win!', winner: 'Winner!', forgot: 'Forgot! Draw two!',
-  // Color Card Flip
+  // UNO Flip
   flip: 'Flip!', pick1: 'Pick one!', pick5: 'Pick five!', skipall: 'Skip everyone!', until: 'Draw until',
   pink: 'Pink!', teal: 'Teal!', orange: 'Orange!', purple: 'Purple!',
 };
@@ -66,6 +66,7 @@ class Sfx {
   // ---------------------------------------------------------------- voice
   _loadClips() {
     for (const k of Object.keys(VOICE_CLIPS)) {
+      console.log('$__Data: ', k, this._clips[k]);
       if (this._clips[k]) continue;
       this._clips[k] = fetch(`./audio/voice/${k}.mp3`)
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
@@ -306,7 +307,7 @@ class Sfx {
     }
   }
 
-  call() { // "Color Card!" (down to one card)
+  call() { // "UNO!" (down to one card)
     this._tone({ freq: 880, type: 'square', dur: 0.12, vol: 0.06 });
     this._tone({ freq: 1318.5, type: 'square', dur: 0.2, vol: 0.06, delay: 0.1 });
     this._tone({ freq: 1760, type: 'triangle', dur: 0.4, vol: 0.08, delay: 0.2 });

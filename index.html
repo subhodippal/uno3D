@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>Color Card 3D</title>
+  <title>UNO</title>
   <meta name="description" content="Classic 3D shedding card game for mobile and desktop. 2–4 players, Skip, Reverse, +2, Wild and Wild +4. Play with bots or online with friends.">
   <meta name="theme-color" content="#8fd14f">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Color Card">
+  <meta name="apple-mobile-web-app-title" content="UNO">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
   <link rel="icon" href="./icons/icon-192.png" sizes="192x192" type="image/png">
@@ -54,7 +54,7 @@
     </div>
     <div class="statusbar"><div id="status" class="status"></div></div>
     <div class="actions">
-      <button id="btnLast" class="btn act last hidden"><span class="last-ico">☝</span>Last card!</button>
+      <button id="btnLast" class="btn act last hidden"><span class="last-ico">☝</span>UNO!</button>
       <button id="btnDraw" class="btn act draw hidden">Draw</button>
     </div>
   </div>
@@ -67,11 +67,11 @@
     </div>
     <div class="card menu-card">
       <nav class="game-tabs" id="gameTabs" aria-label="Choose a game">
-        <button data-v="classic" class="on" aria-pressed="true">🃏 Color Card</button>
-        <button data-v="flip" aria-pressed="false">🌗 Color Card Flip</button>
+        <button data-v="classic" class="on" aria-pressed="true">🃏 UNO</button>
+        <button data-v="flip" aria-pressed="false">🌗 UNO Flip</button>
       </nav>
-      <h1 class="logo" aria-label="Color Card 3D">
-        <span class="word"><i class="l1">C</i><i class="l2">O</i><i class="l3">L</i><i class="l4">O</i><i class="l1">R</i></span><span class="word"><i class="l2">C</i><i class="l3">A</i><i class="l4">R</i><i class="l1">D</i></span><small>3D</small><b class="flip-badge">FLIP</b>
+      <h1 class="logo" aria-label="UNO">
+        <span class="word"><i class="l1">U</i><i class="l2">N</i><i class="l3">O</i><i class="l4">!</i></span><b class="flip-badge">FLIP</b>
       </h1>
       <p class="tagline" id="tagline">Match the colour or number · first to empty their hand wins</p>
       <button id="btnContinue" class="btn btn-ghost hidden">Continue game</button>
@@ -111,7 +111,7 @@
       <div class="rules-box">
         <label class="toggle"><span>Stack +2 / +4<small>Pass the draw on with your own</small></span><input type="checkbox" id="optStack"><i></i></label>
         <label class="toggle"><span>Draw until playable<small>Otherwise draw one card</small></span><input type="checkbox" id="optUntil"><i></i></label>
-        <label class="toggle"><span>Must call “Last card!”<small>Forget it and draw 2</small></span><input type="checkbox" id="optCall"><i></i></label>
+        <label class="toggle"><span>Must call “UNO!”<small>Forget it and draw 2</small></span><input type="checkbox" id="optCall"><i></i></label>
       </div>
       <div id="levelBox">
         <div class="optlbl">Computer skill</div>
