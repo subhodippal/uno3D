@@ -510,3 +510,33 @@ html.rot body {
   transform-origin: 0 0; transform: rotate(90deg) translateY(-100%);
 }
 html.rot canvas#c { width: 100%; height: 100%; }
+
+/* game choice on the setup screen */
+.seg.variant button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-block: 10px; }
+.seg.variant button small { font: 600 11px var(--display); opacity: .75; }
+.opt-note { margin: -4px 0 4px; font: 500 12px var(--display); color: var(--muted); text-align: center; }
+
+/* main menu: Color Card / Color Card Flip tabs (like the ludo menu) */
+.game-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 16px; background: rgba(36, 51, 26, .1); margin-bottom: 2px; }
+.game-tabs button {
+  flex: 1; border: 0; background: transparent; color: var(--muted); white-space: nowrap;
+  font: 700 15px var(--display); padding: 11px 6px; border-radius: 12px; transition: transform .1s;
+}
+.game-tabs button:active { transform: scale(.97); }
+.game-tabs button.on { color: #fff; background: linear-gradient(180deg, #ff8f4d, #e53935); box-shadow: 0 3px 0 #a52520; text-shadow: 0 1px 0 rgba(0,0,0,.2); }
+.game-tabs button[data-v="flip"].on { background: linear-gradient(180deg, #a35cf0, #6a2bc4); box-shadow: 0 3px 0 #4a1f8c; }
+.logo .flip-badge {
+  display: none; font: 700 .34em var(--display); color: #fff; padding: 4px 9px; border-radius: 10px; letter-spacing: 2px;
+  background: linear-gradient(135deg, #e8458b, #8e44e8 55%, #00a6a6); box-shadow: 0 4px 0 #4a1f8c; transform: rotate(5deg);
+}
+#scrMenu.flip .logo .flip-badge { display: inline-block; }
+#scrMenu.flip .menu-card {
+  background:
+    radial-gradient(120% 70% at 0% 0%, rgba(232, 69, 139, .22), transparent 60%),
+    radial-gradient(110% 70% at 100% 0%, rgba(142, 68, 232, .25), transparent 60%),
+    #fff;
+}
+.game-chip { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 12px; border-radius: 12px; background: rgba(36, 51, 26, .06); }
+.game-chip span { font: 700 15px var(--display); color: #c62828; }
+.game-chip span.flip { color: #6a2bc4; }
+.game-chip small { font: 500 11px var(--display); color: var(--muted); }

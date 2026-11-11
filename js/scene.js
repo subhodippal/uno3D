@@ -6,12 +6,13 @@ import { view } from './view.js';
 import * as THREE from '../vendor/three.module.min.js';
 import { tween, ease, updateTweens, wait } from './anim.js';
 import { Fx3D, softSprite } from './fx3d.js';
-import { COLORS, SEATS, DECK, WILD, faceKey } from './rules.js';
+import { COLORS, SEATS, WILD, faceAt, faceKeyAt, parseFaceKey, paletteAt } from './rules.js';
 
 const SKY_TOP = new THREE.Color(0x7cc8f2);
 const SKY_LOW = new THREE.Color(0xeaf8c8);
 const CW = 1, CH = 1.5;
 const DECK_X = -0.9, PILE_X = 0.9;
+const PILE_KEEP = 14, PILE_Y0 = 0.02, PILE_DY = 0.006; // cards kept on the discard pile, base height, step
 const HAND_D = 6;
 const FAN_S = 0.62;
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
@@ -66,8 +67,8 @@ function miniCard(g, x, y, w, h, rot, color) {
   g.restore();
 }
 
-function pie(g, cx, cy, r) {
-  const cols = [COLORS[0].css, COLORS[3].css, COLORS[1].css, COLORS[2].css];
+function pie(g, cx, cy, r, pal = COLORS) {
+  const cols = [pal[0].css, pal[3].css, pal[1].css, pal[2].css];
   for (let i = 0; i < 4; i++) {
     g.beginPath(); g.moveTo(cx, cy);
     g.arc(cx, cy, r, -Math.PI / 2 + i * Math.PI / 2, i * Math.PI / 2);
@@ -79,7 +80,7 @@ function pie(g, cx, cy, r) {
   g.beginPath(); g.moveTo(cx - r, cy); g.lineTo(cx + r, cy); g.moveTo(cx, cy - r); g.lineTo(cx, cy + r); g.stroke();
 }
 
-function symbol(g, v, cx, cy, s, color) {
+function symbol(g, v, cx, cy, s, color, pal = COLORS) {
   if (typeof v === 'number') {
     inkText(g, String(v), cx, cy + s * 0.04, s * 1.05);
     if (v === 6 || v === 9) inkPath(g, () => { g.beginPath(); g.moveTo(cx - s * 0.18, cy + s * 0.5); g.lineTo(cx + s * 0.18, cy + s * 0.5); }, s * 0.06);
@@ -104,21 +105,53 @@ function symbol(g, v, cx, cy, s, color) {
     miniCard(g, cx - s * 0.12, cy + s * 0.02, s * 0.36, s * 0.52, -0.22, color);
     miniCard(g, cx + s * 0.12, cy - s * 0.04, s * 0.36, s * 0.52, 0.16, color);
     inkText(g, '+2', cx, cy + s * 0.36, s * 0.42);
+  } else if (v === 'd1' || v === 'd5') {
+    const n = v === 'd1' ? 1 : 5;
+    const k = Math.min(n, 3);
+    for (let i = 0; i < k; i++) miniCard(g, cx + (i - (k - 1) / 2) * s * 0.2, cy - s * 0.02 + Math.abs(i - (k - 1) / 2) * s * 0.04, s * 0.34, s * 0.5, (i - (k - 1) / 2) * 0.2, color);
+    inkText(g, `+${n}`, cx, cy + s * 0.36, s * 0.42);
+  } else if (v === 'skipall') {
+    const r = s * 0.26;
+    for (const dx of [-0.17, 0.17]) {
+      const x = cx + dx * s;
+      inkPath(g, () => { g.beginPath(); g.arc(x, cy, r, 0, Math.PI * 2); }, s * 0.08);
+      inkPath(g, () => { g.beginPath(); g.moveTo(x - r * 0.7, cy + r * 0.7); g.lineTo(x + r * 0.7, cy - r * 0.7); }, s * 0.08);
+    }
+  } else if (v === 'flip') {
+    // two half cards turning over
+    const r = s * 0.3;
+    inkPath(g, () => { g.beginPath(); g.arc(cx, cy, r, Math.PI * 0.95, Math.PI * 1.9); }, s * 0.085);
+    inkPath(g, () => { g.beginPath(); g.arc(cx, cy, r, -0.05, Math.PI * 0.9); }, s * 0.085);
+    const tip = (a, dir) => {
+      const ex = cx + Math.cos(a) * r, ey = cy + Math.sin(a) * r;
+      const tx = -Math.sin(a) * dir, ty = Math.cos(a) * dir;
+      inkPath(g, () => {
+        g.beginPath();
+        g.moveTo(ex - tx * s * 0.13 + ty * s * 0.13, ey - ty * s * 0.13 - tx * s * 0.13);
+        g.lineTo(ex + tx * s * 0.03, ey + ty * s * 0.03);
+        g.lineTo(ex - tx * s * 0.13 - ty * s * 0.13, ey - ty * s * 0.13 + tx * s * 0.13);
+      }, s * 0.085);
+    };
+    tip(Math.PI * 1.9, 1); tip(Math.PI * 0.9, 1);
+    inkText(g, 'FLIP', cx, cy + s * 0.02, s * 0.24);
   } else if (v === 'wild') {
-    pie(g, cx, cy, s * 0.42);
-  } else if (v === 'w4') {
-    COLORS.forEach((c, i) => miniCard(g, cx + (i - 1.5) * s * 0.17, cy - s * 0.06 + Math.abs(i - 1.5) * s * 0.04, s * 0.3, s * 0.44, (i - 1.5) * 0.18, c.css));
-    inkText(g, '+4', cx, cy + s * 0.36, s * 0.42);
+    pie(g, cx, cy, s * 0.42, pal);
+  } else if (v === 'w4' || v === 'w2') {
+    pal.forEach((c, i) => miniCard(g, cx + (i - 1.5) * s * 0.17, cy - s * 0.06 + Math.abs(i - 1.5) * s * 0.04, s * 0.3, s * 0.44, (i - 1.5) * 0.18, c.css));
+    inkText(g, v === 'w4' ? '+4' : '+2', cx, cy + s * 0.36, s * 0.42);
+  } else if (v === 'wdc') {
+    pie(g, cx, cy - s * 0.06, s * 0.3, pal);
+    inkText(g, '+?', cx, cy + s * 0.36, s * 0.42);
   }
 }
 
-const cornerText = (v) => (typeof v === 'number' ? String(v) : { skip: '⊘', rev: '⇄', d2: '+2', wild: 'W', w4: '+4' }[v]);
+const cornerText = (v) => (typeof v === 'number' ? String(v) : { skip: '⊘', rev: '⇄', d2: '+2', wild: 'W', w4: '+4', d1: '+1', w2: '+2', d5: '+5', flip: '⟲', skipall: '⊘⊘', wdc: '+?' }[v]);
 
-function cardShell(g, panel) {
+function cardShell(g, panel, dark = false) {
   g.clearRect(0, 0, TW, TH);
   rr(g, 3, 3, TW - 6, TH - 6, 26);
-  g.fillStyle = '#ffffff'; g.fill();
-  g.lineWidth = 3; g.strokeStyle = '#cfd3d6'; g.stroke();
+  g.fillStyle = dark ? '#1c1730' : '#ffffff'; g.fill();
+  g.lineWidth = 3; g.strokeStyle = dark ? '#3a3158' : '#cfd3d6'; g.stroke();
   rr(g, 16, 16, TW - 32, TH - 32, 18);
   g.fillStyle = panel; g.fill();
   g.save();
@@ -142,15 +175,16 @@ function makeTex(cv) {
   return t;
 }
 
-function faceTexture(id) {
-  const key = faceKey(id);
+// key: 'C:c:v' classic, 'L:c:v' flip light side, 'D:c:v' flip dark side
+function faceTexture(key) {
   if (texCache.has(key)) return texCache.get(key);
-  const { c, v } = DECK[id];
-  const color = c === WILD ? '#2b2b2e' : COLORS[c].css;
+  const { c, v, dark } = parseFaceKey(key);
+  const pal = paletteAt(dark ? 1 : 0);
+  const color = c === WILD ? (dark ? '#0d0b17' : '#2b2b2e') : pal[c].css;
   const cv = document.createElement('canvas');
   cv.width = TW; cv.height = TH;
   const g = cv.getContext('2d');
-  cardShell(g, color);
+  cardShell(g, color, dark);
   if (c !== WILD) {
     // centre medallion: a white rounded diamond
     g.save();
@@ -161,13 +195,17 @@ function faceTexture(id) {
     g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,.75)'; g.stroke();
     g.restore();
   }
-  symbol(g, v, TW / 2, TH / 2, 150, color);
+  symbol(g, v, TW / 2, TH / 2, 150, color, pal);
   const ct = cornerText(v);
   inkText(g, ct, 46, 52, 44);
   g.save(); g.translate(TW - 46, TH - 52); g.rotate(Math.PI); inkText(g, ct, 0, 0, 44); g.restore();
   if (c === WILD) {
-    COLORS.forEach((col, i) => { g.fillStyle = col.css; g.beginPath(); g.arc(TW - 58 + (i % 2) * 18, 42 + (i >> 1) * 18, 7, 0, Math.PI * 2); g.fill(); });
-    COLORS.forEach((col, i) => { g.fillStyle = col.css; g.beginPath(); g.arc(40 + (i % 2) * 18, TH - 60 + (i >> 1) * 18, 7, 0, Math.PI * 2); g.fill(); });
+    pal.forEach((col, i) => { g.fillStyle = col.css; g.beginPath(); g.arc(TW - 58 + (i % 2) * 18, 42 + (i >> 1) * 18, 7, 0, Math.PI * 2); g.fill(); });
+    pal.forEach((col, i) => { g.fillStyle = col.css; g.beginPath(); g.arc(40 + (i % 2) * 18, TH - 60 + (i >> 1) * 18, 7, 0, Math.PI * 2); g.fill(); });
+  }
+  if (dark) { // a thin glowing rim marks the dark side
+    rr(g, 9, 9, TW - 18, TH - 18, 22);
+    g.lineWidth = 3; g.strokeStyle = 'rgba(190,150,255,.7)'; g.stroke();
   }
   const t = makeTex(cv);
   texCache.set(key, t);
@@ -302,6 +340,8 @@ export class Arena {
     this.drag = null;
     this.color = -1;
     this.dir = 1;
+    this.mode = 'classic';  // or 'flip'
+    this.side = 0;          // flip mode: 0 light, 1 dark
     this.turnSeat = null;
     this.interactive = false;
     this.handBottomPx = 0;
@@ -330,7 +370,7 @@ export class Arena {
 
     const sky = new THREE.Mesh(new THREE.SphereGeometry(180, 32, 16), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
-      uniforms: { uTop: { value: SKY_TOP }, uLow: { value: SKY_LOW } },
+      uniforms: { uTop: { value: SKY_TOP.clone() }, uLow: { value: SKY_LOW.clone() } },
       vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
       fragmentShader: `uniform vec3 uTop; uniform vec3 uLow; varying vec3 vP;
         void main(){ float h = clamp(normalize(vP).y * 2.2, 0.0, 1.0); gl_FragColor = vec4(mix(uLow, uTop, h), 1.0);
@@ -338,8 +378,10 @@ export class Arena {
         }`,
     }));
     scene.add(sky);
+    this.skyU = sky.material.uniforms;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x7aa64a, 1.35));
+    this.hemi = new THREE.HemisphereLight(0xffffff, 0x7aa64a, 1.35);
+    scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xfff4dc, 1.55);
     sun.position.set(5, 14, 7);
     sun.castShadow = true;
@@ -376,6 +418,7 @@ export class Arena {
 
     const sideMat = new THREE.MeshStandardMaterial({ map: edgeTexture(), roughness: 0.7 });
     const topMat = new THREE.MeshBasicMaterial({ map: backTexture() });
+    this.deckTopMat = topMat;
     this.deck = new THREE.Mesh(new THREE.BoxGeometry(CW * 0.98, 1, CH * 0.98), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
     this.deck.castShadow = true;
     this.deck.position.set(DECK_X, 0.05, 0);
@@ -621,16 +664,25 @@ export class Arena {
   }
 
   // ---------------------------------------------------------------- cards
-  _makeCard(id) {
+  _faceKey(id, side = this.side) { return faceKeyAt(this.mode, side, id); }
+  _face(id, side = this.side) { return faceAt(this.mode, side, id); }
+
+  _makeCard(id, backKey = null) {
     const g = new THREE.Group();
     if (id != null && id >= 0) {
-      const mat = new THREE.MeshBasicMaterial({ map: faceTexture(id), alphaTest: 0.5 });
+      const mat = new THREE.MeshBasicMaterial({ map: faceTexture(this._faceKey(id)), alphaTest: 0.5 });
       const front = new THREE.Mesh(cardGeo, mat);
       front.castShadow = true;
       g.add(front);
       g.userData.mat = mat;
     }
-    const back = new THREE.Mesh(cardGeo, backMat);
+    let bm = backMat;
+    if (this.mode === 'flip') {
+      const key = backKey || (id != null && id >= 0 ? this._faceKey(id, 1 - this.side) : null);
+      bm = new THREE.MeshBasicMaterial({ map: key ? faceTexture(key) : backTexture(), alphaTest: 0.5 });
+      g.userData.backMat = bm;
+    }
+    const back = new THREE.Mesh(cardGeo, bm);
     back.rotation.y = Math.PI;
     back.castShadow = true;
     g.add(back);
@@ -644,9 +696,64 @@ export class Arena {
   _drop(mesh) {
     mesh.parent?.remove(mesh);
     mesh.userData.mat?.dispose();
+    mesh.userData.backMat?.dispose();
   }
 
-  _deckH() { return Math.max(0.02, Math.min(this.deckCount, 108) * 0.007); }
+  // flip mode: opponents' cards and the top of the draw pile show the other side
+  _applyBacks(V) {
+    if (this.mode !== 'flip') { this.deckTopMat.map = backTexture(); return; }
+    for (let s = 0; s < this.np; s++) {
+      const keys = V.backs?.[s];
+      const fan = this.fans[s];
+      if (!keys || !fan) continue;
+      fan.forEach((m, i) => { if (m.userData.backMat && keys[i]) m.userData.backMat.map = faceTexture(keys[i]); });
+    }
+    this.deckTopMat.map = V.deckBack ? faceTexture(V.deckBack) : backTexture();
+  }
+
+  // the dark side is played at dusk
+  setDusk(on, animate = true) {
+    if (!this.built || this._dusk === on) return;
+    this._dusk = on;
+    const to = on
+      ? { top: new THREE.Color(0x2b2560), low: new THREE.Color(0x8a6fb8), hemi: 0.75, sun: 0.85, fog: new THREE.Color(0x6e5a9c) }
+      : { top: SKY_TOP.clone(), low: SKY_LOW.clone(), hemi: 1.35, sun: 1.55, fog: SKY_LOW.clone() };
+    const from = { top: this.skyU.uTop.value.clone(), low: this.skyU.uLow.value.clone(), hemi: this.hemi.intensity, sun: this.sun.intensity, fog: this.scene.fog.color.clone() };
+    const apply = (k) => {
+      this.skyU.uTop.value.copy(from.top).lerp(to.top, k);
+      this.skyU.uLow.value.copy(from.low).lerp(to.low, k);
+      this.hemi.intensity = from.hemi + (to.hemi - from.hemi) * k;
+      this.sun.intensity = from.sun + (to.sun - from.sun) * k;
+      this.scene.fog.color.copy(from.fog).lerp(to.fog, k);
+      this.scene.background.copy(this.scene.fog.color);
+      this.renderer.setClearColor(this.scene.fog.color, 1);
+    };
+    if (animate) tween(1.2, apply); else apply(1);
+  }
+
+  // Flip: every card spins over to show its other side, then the table is rebuilt on the new side
+  async flipAll(V) {
+    const groups = [...this.myCards.values(), ...this.pile, ...this.fans.flat().filter(Boolean)];
+    const spins = groups.map((m) => ({ m, q0: m.quaternion.clone(), y0: m.position.y }));
+    const qs = new THREE.Quaternion();
+    this._sfx?.('shuffle');
+    this.setDusk(!!V.side);
+    this.ringPulse = 1; this.ringFlash = 1;
+    await tween(0.7, (e, raw) => {
+      for (const { m, q0, y0 } of spins) {
+        m.quaternion.copy(q0).multiply(qs.setFromAxisAngle(Y, Math.PI * e));
+        if (m.parent === this.scene) m.position.y = y0 + Math.sin(Math.PI * raw) * 0.6;
+      }
+      this.deck.position.y = (this.deck.userData.baseY ?? 0.05) + Math.sin(Math.PI * raw) * 0.4;
+      if (raw > 0.5 && !this._flipSwapped) { this._flipSwapped = true; this._applyBacks(V); }
+    }, ease.inOut);
+    this._flipSwapped = false;
+    this.deck.position.y = this.deck.userData.baseY ?? this.deck.position.y;
+    this.fx.shockwave(new THREE.Vector3(0, 0.05, 0), V.side ? 0xb48cff : 0xffffff, 4);
+    await this.reset(V, { handMode: this.handMode, hideHand: this.hideHand });
+  }
+
+  _deckH() { return Math.max(0.02, Math.min(this.deckCount, 112) * 0.007); }
   _deckPose() { return { p: new THREE.Vector3(DECK_X, this._deckH() + 0.02, 0), q: flatQuat(0, false), s: 1 }; }
 
   setDeckCount(n) {
@@ -656,6 +763,7 @@ export class Arena {
     this.deck.visible = n > 0;
     this.deck.scale.y = h;
     this.deck.position.y = h / 2;
+    this.deck.userData.baseY = h / 2;
   }
 
   // ---------------------------------------------------------------- seats & layout
@@ -717,8 +825,8 @@ export class Arena {
 
   _sortHand(ids) {
     const rank = (id) => {
-      const c = DECK[id];
-      const v = typeof c.v === 'number' ? c.v : { skip: 10, rev: 11, d2: 12, wild: 13, w4: 14 }[c.v];
+      const c = this._face(id);
+      const v = typeof c.v === 'number' ? c.v : { skip: 10, skipall: 10.5, rev: 11, flip: 11.5, d1: 12, d2: 12.2, d5: 12.5, wild: 13, w2: 14, w4: 14.2, wdc: 14.5 }[c.v] ?? 15;
       return c.c * 20 + v;
     };
     return ids.slice().sort((a, b) => rank(a) - rank(b) || a - b);
@@ -840,15 +948,20 @@ export class Arena {
     m.scale.setScalar(s.s);
   }
 
-  _pilePose(i) {
+  // i varies the scatter; slot is the card's height in the visible stack. The newest card
+  // must always get the highest slot, or it would be hidden under older cards.
+  _pilePose(i, slot = i) {
     const r = (Math.sin(i * 12.9898) * 43758.5453) % 1;
     const r2 = (Math.sin(i * 78.233) * 12543.123) % 1;
-    return { p: new THREE.Vector3(PILE_X + r * 0.14, 0.02 + (i % 40) * 0.006, r2 * 0.14), q: flatQuat(r2 * 0.55, true), s: 1 };
+    return { p: new THREE.Vector3(PILE_X + r * 0.14, PILE_Y0 + slot * PILE_DY, r2 * 0.14), q: flatQuat(r2 * 0.55, true), s: 1 };
   }
 
   // ---------------------------------------------------------------- sync
   reset(V, { handMode = true, hideHand = false } = {}) {
     this.gen = (this.gen || 0) + 1;
+    this.mode = V.cfg?.mode === 'flip' ? 'flip' : 'classic';
+    this.side = V.side || 0;
+    this.setDusk(!!this.side);
     this.peekId = -1; this.drag = null;
     this._clearPilePeek();
     for (const m of this.myCards.values()) this._drop(m);
@@ -864,12 +977,13 @@ export class Arena {
     this.playable = new Set();
     for (let s = 0; s < V.np; s++) {
       if (this.handMode && s === this.viewer) continue;
-      this.fans[s] = Array.from({ length: V.counts[s] }, () => this._makeCard(null));
+      this.fans[s] = Array.from({ length: V.counts[s] }, (_, i) => this._makeCard(null, V.backs?.[s]?.[i]));
     }
     if (this.handMode) for (const id of V.my) this.myCards.set(id, this._makeCard(id));
     V.pile.forEach((id, i) => { const m = this._makeCard(id); this._place(m, this._pilePose(i)); this.pile.push(m); });
     this.pileN = V.pile.length;
     this.setDeckCount(V.deckCount);
+    this._applyBacks(V);
     this.setTable(V, false);
     if (this.handMode) {
       const slots = this._handSlots(this._sortHand(V.my));
@@ -885,6 +999,7 @@ export class Arena {
   }
 
   reconcile(V) {
+    if ((V.cfg?.mode === 'flip' ? 'flip' : 'classic') !== this.mode || (V.side || 0) !== this.side) return this.reset(V, { handMode: this.handMode || V.viewer >= 0, hideHand: this.hideHand });
     if (V.np !== this.np || V.viewer !== this.viewer) return this.reset(V, { handMode: this.handMode || V.viewer >= 0, hideHand: this.hideHand });
     if (this.handMode) {
       const want = new Set(V.my);
@@ -905,6 +1020,7 @@ export class Arena {
       this.pileN = V.pile.length;
     }
     this.setDeckCount(V.deckCount);
+    this._applyBacks(V);
     this.setTable(V);
     return this.layout(0.25);
   }
@@ -915,11 +1031,12 @@ export class Arena {
     this.color = V.color;
     this.turnSeat = V.over ? V.over.winner : V.turn;
     if (!this.built) return;
-    const col = new THREE.Color(V.color >= 0 ? COLORS[V.color].hex : 0xffffff);
+    const P = paletteAt(V.side ?? this.side);
+    const col = new THREE.Color(V.color >= 0 ? P[V.color].hex : 0xffffff);
     const from = this.glowMat.color.clone();
     const apply = (k) => { this.glowMat.color.copy(from).lerp(col, k); };
     if (animate) tween(0.5, apply); else apply(1);
-    this._ringColor(V.color >= 0 ? COLORS[V.color].hex : 0xffffff, animate);
+    this._ringColor(V.color >= 0 ? P[V.color].hex : 0xffffff, animate);
     if (animate && prevDir !== V.dir) this._flipFx();
     else if (animate && prevColor !== V.color) this.ringPulse = Math.max(this.ringPulse, 0.6);
   }
@@ -951,6 +1068,9 @@ export class Arena {
   // ---------------------------------------------------------------- animations
   async deal(V) {
     const gen = this.gen = (this.gen || 0) + 1;
+    this.mode = V.cfg?.mode === 'flip' ? 'flip' : 'classic';
+    this.side = V.side || 0;
+    this.setDusk(!!this.side);
     this.peekId = -1; this.drag = null;
     this._clearPilePeek();
     const counts = V.counts;
@@ -1024,12 +1144,16 @@ export class Arena {
     }
     const gen = this.gen;
     const lay = this.layout(0.3);
-    const pose = this._pilePose(this.pileN++);
+    // keep at most PILE_KEEP cards: drop the oldest and settle the rest one step down
+    while (this.pile.length >= PILE_KEEP) {
+      this._drop(this.pile.shift());
+      this.pile.forEach((c) => { c.position.y -= PILE_DY; });
+    }
+    this.pile.push(m); // reserve the top slot now so nothing can land above it
+    const pose = this._pilePose(this.pileN++, this.pile.length - 1);
     this._sfx?.('whoosh', 1);
     await this._moveTo(m, this.scene, pose, 0.46, 1.6, 0, rand(0.7, 1.3) * Math.PI * (Math.random() < 0.5 ? -1 : 1));
-    if (gen !== this.gen) { this._drop(m); await lay; return pose.p; }
-    this.pile.push(m);
-    if (this.pile.length > 14) this._drop(this.pile.shift());
+    if (gen !== this.gen) { await lay; return pose.p; }
     await lay;
     return pose.p;
   }
@@ -1092,6 +1216,7 @@ export class Arena {
     const keep = this.pile.pop();
     const jobs = this.pile.map((m, i) => this._moveTo(m, this.scene, this._deckPose(), 0.35, 0.6, i * 25, 3).then(() => this._drop(m)));
     this.pile = keep ? [keep] : [];
+    if (keep) keep.position.y = PILE_Y0; // the card left behind becomes the bottom of the new pile
     await Promise.all(jobs);
     this.setDeckCount(deckCount);
   }
@@ -1120,11 +1245,12 @@ export class Arena {
 
   // ---------------------------------------------------------------- effects
   cardFx(pos, id, color) {
-    const c = DECK[id];
-    const hex = COLORS[color]?.hex ?? 0xffffff;
-    this.fx.shockwave(pos, 0xffffff, c.v === 'w4' ? 4 : 2.2);
+    const c = this._face(id);
+    const P = paletteAt(this.side);
+    const hex = P[color]?.hex ?? 0xffffff;
+    this.fx.shockwave(pos, 0xffffff, c.v === 'w4' || c.v === 'wdc' || c.v === 'd5' ? 4 : 2.2);
     this.fx.burst(pos, hex, c.c === WILD ? 50 : 22, false, { speed: 0.6, up: 0.6, size: 0.12 });
-    if (c.c === WILD) COLORS.forEach((cc, i) => setTimeout(() => this.fx.burst(pos, cc.hex, 18, true, { speed: 0.8, size: 0.12 }), i * 70));
+    if (c.c === WILD) P.forEach((cc, i) => setTimeout(() => this.fx.burst(pos, cc.hex, 18, true, { speed: 0.8, size: 0.12 }), i * 70));
     if (typeof c.v !== 'number') this.shake(c.v === 'w4' ? 0.35 : 0.2);
   }
 

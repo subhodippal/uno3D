@@ -66,10 +66,14 @@
         <button class="icon-btn view-chip touch-only" data-act="orient" aria-label="Portrait / landscape"><svg viewBox="0 0 24 24" class="oico"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg><b class="olbl">Portrait</b></button>
     </div>
     <div class="card menu-card">
+      <nav class="game-tabs" id="gameTabs" aria-label="Choose a game">
+        <button data-v="classic" class="on" aria-pressed="true">🃏 Color Card</button>
+        <button data-v="flip" aria-pressed="false">🌗 Color Card Flip</button>
+      </nav>
       <h1 class="logo" aria-label="Color Card 3D">
-        <span class="word"><i class="l1">C</i><i class="l2">O</i><i class="l3">L</i><i class="l4">O</i><i class="l1">R</i></span><span class="word"><i class="l2">C</i><i class="l3">A</i><i class="l4">R</i><i class="l1">D</i></span><small>3D</small>
+        <span class="word"><i class="l1">C</i><i class="l2">O</i><i class="l3">L</i><i class="l4">O</i><i class="l1">R</i></span><span class="word"><i class="l2">C</i><i class="l3">A</i><i class="l4">R</i><i class="l1">D</i></span><small>3D</small><b class="flip-badge">FLIP</b>
       </h1>
-      <p class="tagline">Match the colour or number · first to empty their hand wins</p>
+      <p class="tagline" id="tagline">Match the colour or number · first to empty their hand wins</p>
       <button id="btnContinue" class="btn btn-ghost hidden">Continue game</button>
       <button id="btnVsCpu" class="btn btn-cyan">
         <svg viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg>
@@ -95,6 +99,7 @@
   <section id="scrSetup" class="screen hidden">
     <div class="card">
       <h2 id="setupTitle">New game</h2>
+      <div class="game-chip" id="setupGame"></div>
       <div class="optlbl">Players</div>
       <div class="seg" id="pickPlayers"><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button></div>
       <div id="seatRows" class="seat-rows"></div>
@@ -107,7 +112,6 @@
         <label class="toggle"><span>Stack +2 / +4<small>Pass the draw on with your own</small></span><input type="checkbox" id="optStack"><i></i></label>
         <label class="toggle"><span>Draw until playable<small>Otherwise draw one card</small></span><input type="checkbox" id="optUntil"><i></i></label>
         <label class="toggle"><span>Must call “Last card!”<small>Forget it and draw 2</small></span><input type="checkbox" id="optCall"><i></i></label>
-        <label class="toggle"><span>More action cards<small>Skip, Reverse, +2, +4 and colour cards come up more often after each shuffle</small></span><input type="checkbox" id="optBoost"><i></i></label>
       </div>
       <div id="levelBox">
         <div class="optlbl">Computer skill</div>
@@ -126,6 +130,7 @@
       <label class="field"><span>Your name</span><input id="inpName" maxlength="12" autocomplete="nickname" placeholder="Player"></label>
       <div class="quick-box">
         <div class="quick-head"><b>⚡ Quick match</b><small>Play with anyone who is searching</small></div>
+        <div class="game-chip" id="mmGame"></div>
         <div class="optlbl">Table size</div>
         <div class="seg" id="mmPlayers"><button data-v="2">2 players</button><button data-v="3">3</button><button data-v="4">4</button></div>
         <button id="btnQuick" class="btn btn-quick">
@@ -218,6 +223,9 @@
       <label class="toggle"><span>Voice<small>Male voice calls out cards and turns</small></span><input type="checkbox" id="setVoice"><i></i></label>
       <label class="toggle"><span>Music</span><input type="checkbox" id="setMusic"><i></i></label>
       <label class="toggle"><span>Vibration</span><input type="checkbox" id="setVibrate"><i></i></label>
+      <div class="optlbl">Special cards after a shuffle</div>
+      <div class="seg" id="segSpecial"><button data-v="low">Low</button><button data-v="medium">Medium</button><button data-v="high">High</button></div>
+      <p class="opt-note" id="specialNote"></p>
       <div class="optlbl">View</div>
       <div class="seg" id="segView"><button data-v="3d">3D</button><button data-v="2d">2D (top-down)</button></div>
       <div class="touch-only">

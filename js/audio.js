@@ -6,6 +6,9 @@ export const VOICE_CLIPS = {
   red: 'Red!', green: 'Green!', yellow: 'Yellow!', blue: 'Blue!',
   pick2: 'Pick two!', pick4: 'Pick four!', draw: 'Draw card!', pass: 'Pass.',
   turn: 'Your turn!', youwin: 'You win!', winner: 'Winner!', forgot: 'Forgot! Draw two!',
+  // Color Card Flip
+  flip: 'Flip!', pick1: 'Pick one!', pick5: 'Pick five!', skipall: 'Skip everyone!', until: 'Draw until',
+  pink: 'Pink!', teal: 'Teal!', orange: 'Orange!', purple: 'Purple!',
 };
 
 class Sfx {

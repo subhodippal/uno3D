@@ -28,7 +28,7 @@ const store = {
 };
 
 const lowEnd = (navigator.hardwareConcurrency || 4) <= 2;
-const settings = Object.assign({ view: '3d', orient: 'auto', sound: true, voice: true, music: true, muted: false, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
+const settings = Object.assign({ special: 'medium', view: '3d', orient: 'auto', sound: true, voice: true, music: true, muted: false, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
 // the HUD speaker button mutes everything; the settings screen switches each part
 function applyAudio() {
   sfx.enabled = settings.sound && !settings.muted;
@@ -165,7 +165,7 @@ function message(title, text, after) {
 
 // ---------------------------------------------------------------- setup
 const setup = Object.assign({
-  mode: 'cpu', np: 4, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, boost: true, level: 'normal',
+  mode: 'cpu', variant: 'classic', np: 4, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, level: 'normal',
   kinds: ['human', 'cpu', 'cpu', 'cpu'], names: ['', '', '', ''],
 }, store.get(SETUP_KEY) || {});
 
@@ -185,16 +185,18 @@ function openSetup(mode) {
   show('scrSetup');
 }
 
+// game config from the setup screen (setup.mode is the screen mode: 'cpu' or 'host')
+function setupCfg() { return R.normalizeCfg({ ...setup, mode: setup.variant, special: settings.special }); }
 function renderSetup() {
-  const c = R.normalizeCfg(setup);
+  const { mode: variant, special, ...c } = setupCfg();
   Object.assign(setup, c);
+  setup.variant = variant;
   $$('#pickPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === setup.np));
   $$('#pickHand button').forEach((b) => b.classList.toggle('on', +b.dataset.v === setup.hand));
   $('#pickTarget').innerHTML = R.TARGETS.map((t) => `<button data-v="${t}" class="${t === setup.target ? 'on' : ''}"><b>${t || '∞'}</b><small>${t ? 'points' : 'free play'}</small></button>`).join('');
   $('#optStack').checked = setup.stack;
   $('#optUntil').checked = setup.drawMode === 'until';
   $('#optCall').checked = setup.callRule;
-  $('#optBoost').checked = setup.boost !== false;
   const local = setup.mode !== 'host';
   $('#seatRows').classList.toggle('hidden', !local);
   if (local) {
@@ -214,7 +216,7 @@ function renderSetup() {
 }
 
 function saveSetup() {
-  store.set(SETUP_KEY, { np: setup.np, hand: setup.hand, target: setup.target, stack: setup.stack, drawMode: setup.drawMode, callRule: setup.callRule, boost: setup.boost, level: setup.level, names: setup.names });
+  store.set(SETUP_KEY, { np: setup.np, hand: setup.hand, target: setup.target, stack: setup.stack, drawMode: setup.drawMode, callRule: setup.callRule, variant: setup.variant, level: setup.level, names: setup.names });
 }
 
 const segPick = (sel, key) => $(sel).addEventListener('click', (e) => {
@@ -228,7 +230,6 @@ segPick('#segLevel', 'level');
 $('#optStack').addEventListener('change', (e) => { sfx.click(); setup.stack = e.target.checked; });
 $('#optUntil').addEventListener('change', (e) => { sfx.click(); setup.drawMode = e.target.checked ? 'until' : 'one'; });
 $('#optCall').addEventListener('change', (e) => { sfx.click(); setup.callRule = e.target.checked; });
-$('#optBoost').addEventListener('change', (e) => { sfx.click(); setup.boost = e.target.checked; });
 $('#seatRows').addEventListener('click', (e) => {
   const b = e.target.closest('.kind button'); if (!b) return;
   sfx.click();
@@ -244,7 +245,7 @@ $('#btnStart').addEventListener('click', () => {
   sfx.unlock(); sfx.click();
   saveSetup();
   if (setup.mode === 'host') return hostCreate();
-  const cfg = R.normalizeCfg(setup);
+  const cfg = setupCfg();
   const kinds = setup.kinds.slice(0, cfg.np);
   const seats = kinds.map((k, s) => ({ name: (k === 'human' && setup.names[s]) || defaultName(s, k, kinds), kind: k }));
   startSession({ mode: 'local', cfg, seats, level: setup.level, G: R.newGame(cfg, { starter: Math.floor(Math.random() * cfg.np) }) });
@@ -350,10 +351,12 @@ function restartMatch() {
 
 // ---------------------------------------------------------------- presentation
 // Serialised so animations never overlap
+let presenting = 0; // presentations queued or running
 function present(V, fresh = false) {
   if (!V) return chain;
   const snap = clone(V);
-  chain = chain.then(() => doPresent(snap, fresh)).catch((e) => console.error(e));
+  presenting++;
+  chain = chain.then(() => doPresent(snap, fresh)).catch((e) => console.error(e)).finally(() => { presenting--; });
   return chain;
 }
 
@@ -361,7 +364,6 @@ async function doPresent(V, fresh) {
   if (!S) return;
   busy = true;
   arena.setInteractive(false);
-  closePicker();
   updateButtons(V);
   const hide = hidden();
   const mode = { handMode: V.viewer >= 0, hideHand: hide };
@@ -395,6 +397,7 @@ async function doPresent(V, fresh) {
   if (arena.hideHand !== hidden()) await arena.setHidden(hidden());
   busy = false;
   renderTags(V);
+  checkPicker(V);
   if (V.over) {
     if (!shown.over) { shown.over = true; await showOutcome(V); } else showRoundScreen(V);
     return;
@@ -424,37 +427,72 @@ function pileWord(text, css) {
   popWord(text, view.w / 2, Math.max(120, p.y - 30), css);
 }
 
+// card colours of the side being shown (flip mode has a light and a dark side)
+const pal = (side = arena.side) => R.paletteAt(side);
+
 async function animateEvent(ev, V, idx) {
   const name = (s) => S.seats[s]?.name || `Player ${s + 1}`;
   switch (ev.t) {
     case 'play': {
-      const c = R.card(ev.card);
+      const side = ev.side || 0;
+      const c = R.faceAt(V.cfg.mode, side, ev.card);
       const p = await arena.playCard(ev.seat, ev.card);
-      arena.setTable({ dir: arena.dir, color: ev.color, turn: V.turn, over: V.over });
-      updateColorTag(ev.color, arena.dir);
+      arena.setTable({ dir: arena.dir, color: ev.color, turn: V.turn, over: V.over, side });
+      updateColorTag(ev.color, arena.dir, false, side);
       sfx.thwack(typeof c.v === 'number' ? 0.8 : 1.2);
       arena.cardFx(p, ev.card, ev.color);
-      const css = R.COLORS[ev.color].css;
-      const cname = R.COLORS[ev.color].name;
-      if (c.v === 'wild' || c.v === 'w4') {
+      const P = pal(side);
+      const css = P[ev.color].css;
+      const cname = P[ev.color].name;
+      const cvoice = cname.toLowerCase();
+      const who = name(ev.seat);
+      if (c.c === R.WILD) {
         sfx.wild();
         bg.flash(css);
-        R.COLORS.forEach((cc, i) => setTimeout(() => bg.launch(cc.css, 1, 0.75, true), i * 120));
-        if (c.v === 'w4') {
-          callout(`+4 ${cname.toUpperCase()}!`, `${name(ev.seat)} · Pick 4 · colour is now ${cname}`, css, ['pick4', cname.toLowerCase()]);
-          setTimeout(() => sfx.punch(), 120); setTimeout(() => sfx.plus(4), 260);
-        } else callout(`${cname.toUpperCase()}!`, `${name(ev.seat)} · Colour card`, css, ['colorcard', cname.toLowerCase()]);
-      } else if (c.v === 'd2') {
-        sfx.punch(); setTimeout(() => sfx.plus(2), 120); bg.launch(css, 2, 0.7, true);
-        callout('PICK 2!', `${name(ev.seat)} · +2 cards`, css, 'pick2');
+        P.forEach((cc, i) => setTimeout(() => bg.launch(cc.css, 1, 0.75, true), i * 120));
+        if (c.v === 'w4' || c.v === 'w2') {
+          const n = R.drawAmount(c.v);
+          callout(`+${n} ${cname.toUpperCase()}!`, `${who} · Pick ${n} · colour is now ${cname}`, css, [`pick${n}`, cvoice]);
+          setTimeout(() => sfx.punch(), 120); setTimeout(() => sfx.plus(n), 260);
+        } else if (c.v === 'wdc') {
+          callout(`DRAW ${cname.toUpperCase()}!`, `${who} · next player draws until they get ${cname}`, css, ['until', cvoice]);
+          setTimeout(() => sfx.punch(), 120); setTimeout(() => sfx.plus(5), 260);
+          arena.shake(0.4);
+        } else callout(`${cname.toUpperCase()}!`, `${who} · Colour card`, css, ['colorcard', cvoice]);
+      } else if (c.v === 'd2' || c.v === 'd1' || c.v === 'd5') {
+        const n = R.drawAmount(c.v);
+        sfx.punch(); setTimeout(() => sfx.plus(Math.min(n, 4)), 120); bg.launch(css, n >= 5 ? 4 : 2, 0.7, true);
+        if (n >= 5) arena.shake(0.35);
+        callout(`PICK ${n}!`, `${who} · +${n} card${n > 1 ? 's' : ''}`, css, `pick${n}`);
       } else if (c.v === 'rev') sfx.reverse();
-      else if (c.v === 'skip') { sfx.punch(); callout('SKIP!', `${name(ev.seat)} · next player misses a turn`, css); }
+      else if (c.v === 'skip') { sfx.punch(); callout('SKIP!', `${who} · next player misses a turn`, css); }
+      else if (c.v === 'skipall') { sfx.punch(); arena.shake(0.3); callout('SKIP EVERYONE!', `${who} plays again`, css, 'skipall'); }
+      break;
+    }
+    case 'flip': {
+      sfx.wild();
+      sfx.voice('flip', { queue: true });
+      const css = ev.side ? '#8e44e8' : '#1e6fd9';
+      bg.flash(css);
+      showBanner('FLIP!', ev.side ? 'Dark side · Pick 5, Skip Everyone, Draw Colour' : 'Back to the light side', css, 1600);
+      arena.shake(0.3);
+      await arena.flipAll(V);
+      updateColorTag(ev.color, arena.dir, true, ev.side);
+      if (ev.color >= 0) setTimeout(() => sfx.voice(pal(ev.side)[ev.color].name.toLowerCase(), { queue: true }), 200);
+      break;
+    }
+    case 'color': {
+      const P = pal();
+      arena.setTable({ dir: arena.dir, color: ev.color, turn: V.turn, over: V.over, side: arena.side });
+      updateColorTag(ev.color, arena.dir, false, arena.side);
+      callout(`${P[ev.color].name.toUpperCase()}!`, `${name(ev.seat)} picked the colour`, P[ev.color].css, P[ev.color].name.toLowerCase());
+      await sleep(300);
       break;
     }
     case 'rev': {
-      const css = R.COLORS[V.color]?.css || '#8a5cff';
-      arena.setTable({ dir: ev.dir, color: arena.color, turn: V.turn, over: V.over });
-      updateColorTag(arena.color, ev.dir, true);
+      const css = pal()[arena.color]?.css || '#8a5cff';
+      arena.setTable({ dir: ev.dir, color: arena.color, turn: V.turn, over: V.over, side: arena.side });
+      updateColorTag(arena.color, ev.dir, true, arena.side);
       const way = ev.dir > 0 ? 'Clockwise' : 'Anticlockwise';
       // let a "Last card!" shout finish first
       const wait = V.evs.some((e) => e.t === 'last' && e.seat !== undefined) ? 900 : 0;
@@ -471,6 +509,10 @@ async function animateEvent(ev, V, idx) {
         popWord('FORGOT! +2', pt.x, pt.y, '#ff5d7a');
         toast(`${name(ev.seat)} forgot to call Last card! and draws 2`, 2600);
         sfx.error();
+      } else if (ev.why === 'color') {
+        const pt = seatPoint(ev.seat);
+        popWord(`+${ev.n}`, pt.x, pt.y, '#ff5d7a');
+        if (ev.n >= 4) bg.launch(seatCss(ev.seat), 2, 0.7, true);
       } else if (ev.why === 'stack' && ev.n >= 2) {
         const pt = seatPoint(ev.seat);
         popWord(`+${ev.n}`, pt.x, pt.y, '#ff5d7a');
@@ -487,7 +529,7 @@ async function animateEvent(ev, V, idx) {
     }
     case 'skip': {
       sfx.skip();
-      sfx.voice('skip', { queue: true });
+      if (!V.evs.some((e) => e.t === 'play' && e.v === 'skipall')) sfx.voice('skip', { queue: true });
       const pt = seatPoint(ev.seat);
       popWord('SKIPPED', pt.x, pt.y, '#ff5d7a');
       arena.seatFx(ev.seat, 0xff5d7a);
@@ -521,10 +563,10 @@ async function animateEvent(ev, V, idx) {
 
 // HUD badge: a circular arrow in the current colour that turns the way play goes
 const DIR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2A8.8 8.8 0 1 1 4.4 7.6"/><polygon points="6.2,3.4 7.2,9.2 1.6,6.8"/></svg>';
-function updateColorTag(color, dir, flip = false) {
+function updateColorTag(color, dir, flip = false, side = arena.side) {
   const el = $('#colorTag');
-  if (color == null || color < 0) { el.innerHTML = ''; return; }
-  const c = R.COLORS[color];
+  if (color == null || color < 0) { el.innerHTML = ''; el.dataset.c = ''; return; }
+  const c = R.paletteAt(side)[color];
   const changed = el.dataset.c !== String(color) || el.dataset.d !== String(dir);
   el.dataset.c = color; el.dataset.d = dir;
   el.style.setProperty('--c', c.css);
@@ -553,7 +595,7 @@ function renderTags(V) {
       <span class="cnt">${V.counts[s]}</span>${V.counts[s] === 1 && !V.over ? '<span class="one">1 CARD</span>' : ''}</div>`;
   }).join('');
   placeTags();
-  updateColorTag(V.color, V.dir);
+  updateColorTag(V.awaitColor ? -1 : V.color, V.dir, false, V.side);
   // pending draw badge on the pile
   const pd = $('#pending');
   if (V.pending > 0 && !V.over) {
@@ -584,7 +626,10 @@ function setTurnUI(V) {
   arena.setPlayable(ids);
   const seat = S.seats[V.turn];
   let text;
-  if (mine) {
+  if (mine && V.awaitColor) {
+    text = 'Choose the colour';
+    if (pendingWild !== AFTER_FLIP) openPicker(AFTER_FLIP);
+  } else if (mine) {
     if (V.pending > 0) text = ids.length ? `Stack or draw ${V.pending}` : `Draw ${V.pending}`;
     else if (V.drawn >= 0) text = 'Play it or pass';
     else text = ids.length ? 'Your turn' : 'No match · draw';
@@ -601,7 +646,7 @@ function updateButtons(V, ids = []) {
   const mine = V && isMyTurn(V);
   const d = $('#btnDraw');
   const l = $('#btnLast');
-  d.classList.toggle('hidden', !mine);
+  d.classList.toggle('hidden', !mine || !!V.awaitColor);
   l.classList.toggle('hidden', !(mine && V.cfg.callRule && V.my.length === 2 && !V.called[V.viewer] && ids.length));
   if (!mine) return;
   if (V.drawn >= 0) { d.textContent = 'Pass'; d.classList.remove('hint'); }
@@ -650,10 +695,10 @@ function firecrackers(waves = 4) {
   }
 }
 
-function miniCard(id) {
-  const c = R.card(id);
-  const k = c.c === R.WILD ? '#2b2b2e' : R.COLORS[c.c].css;
-  const t = typeof c.v === 'number' ? c.v : { skip: '⊘', rev: '⇄', d2: '+2', wild: '★', w4: '+4' }[c.v];
+function miniCard(V, id) {
+  const c = R.face(V, id);
+  const k = c.c === R.WILD ? '#2b2b2e' : R.palette(V)[c.c].css;
+  const t = typeof c.v === 'number' ? c.v : { skip: '⊘', rev: '⇄', d2: '+2', wild: '★', w4: '+4', d1: '+1', w2: '+2', d5: '+5', flip: '⟲', skipall: '⊘⊘', wdc: '+?' }[c.v];
   return `<i style="--k:${k}">${t}</i>`;
 }
 
@@ -667,7 +712,7 @@ function showRoundScreen(V) {
     const hand = V.over.hands[s] || [];
     const got = s === w ? `+${V.over.pts}` : `${hand.length} left`;
     return `<div class="seat ${s === w ? 'win' : ''}" style="--c:${seatCss(s)}">${avatar(s, S.seats[s].name)}
-      <div class="info"><b>${esc(S.seats[s].name)}</b><span class="sub">${got}</span>${hand.length ? `<div class="minis">${hand.slice(0, 14).map(miniCard).join('')}${hand.length > 14 ? '<i>…</i>' : ''}</div>` : ''}</div>
+      <div class="info"><b>${esc(S.seats[s].name)}</b><span class="sub">${got}</span>${hand.length ? `<div class="minis">${hand.slice(0, 14).map((id) => miniCard(V, id)).join('')}${hand.length > 14 ? '<i>…</i>' : ''}</div>` : ''}</div>
       <span class="pts">${V.scores[s]}</span></div>`;
   }).join('');
   const nb = $('#btnNext');
@@ -732,6 +777,7 @@ function maybeCpu() {
 function submit(a) {
   const V = curView();
   if (!isMyTurn(V)) { sfx.error(); return; }
+  if (a.type === 'play' && R.isWild(V, a.card) && !(a.color >= 0 && a.color < 4)) { openPicker(a.card); return; }
   arena.setInteractive(false);
   updateButtons(null);
   if (S.mode === 'guest') {
@@ -747,7 +793,8 @@ function rejectCard() {
   if (!V || !isMyTurn(V)) { toast('Wait for your turn', 1200); return; }
   if (V.pending > 0) toast(`Stack a ${V.pendType === 'd2' ? '+2 or +4' : '+4'}, or draw ${V.pending}`);
   else if (V.drawn >= 0) toast('You can only play the card you drew');
-  else toast(`Match ${R.COLORS[V.color].name} or the symbol`, 1500);
+  else if (V.awaitColor) toast('Choose a colour first', 1400);
+  else toast(`Match ${R.palette(V)[V.color].name} or the symbol`, 1500);
 }
 arena.onReject = () => rejectCard();
 arena.onPeek = (id) => $('#tags').classList.toggle('peeking', id >= 0);
@@ -757,7 +804,8 @@ arena.onCard = (id) => {
   const V = curView();
   if (!isMyTurn(V)) return;
   if (!R.playable(V, id, V.viewer)) { rejectCard(); return; }
-  if (R.isWild(id)) { openPicker(id); return; }
+  if (pendingWild !== -1 && id !== pendingWild) { toast('Choose a colour first', 1400); return; }
+  if (R.isWild(V, id)) { openPicker(id); return; }
   submit({ type: 'play', card: id });
 };
 arena.onDeck = () => {
@@ -776,22 +824,37 @@ $('#btnLast').addEventListener('click', () => {
   submit({ type: 'call' });
 });
 
-$('#swatches').innerHTML = R.COLORS.map((c, i) => `<button data-c="${i}" style="--c:${c.css}">${c.name}<small></small></button>`).join('');
+// pendingWild: the colour card waiting for a colour, or AFTER_FLIP when a Flip turned up a colour card
+const AFTER_FLIP = -2;
 function openPicker(id) {
   pendingWild = id;
   const V = curView();
+  const P = R.palette(V);
+  $('#swatches').innerHTML = P.map((c, i) => `<button data-c="${i}" style="--c:${c.css}">${c.name}<small></small></button>`).join('');
+  const v = id >= 0 ? R.face(V, id).v : null;
+  $('#picker p').innerHTML = id === AFTER_FLIP ? '<b>Flip</b> turned up a colour card · choose a colour'
+    : v === 'w4' ? '<b>Pick 4</b> · choose a colour' : v === 'w2' ? '<b>Pick 2</b> · choose a colour'
+      : v === 'wdc' ? '<b>Wild Draw Colour</b> · the next player draws until they get…' : '<b>Colour card</b> · choose a colour';
+  $('#btnPickCancel').classList.toggle('hidden', id === AFTER_FLIP);
   const counts = [0, 0, 0, 0];
-  V.my.forEach((x) => { const c = R.card(x); if (c.c < 4 && x !== id) counts[c.c]++; });
+  V.my.forEach((x) => { const c = R.face(V, x); if (c.c < 4 && x !== id) counts[c.c]++; });
   $$('#swatches button').forEach((b, i) => { b.querySelector('small').textContent = counts[i] ? `${counts[i]} in hand` : ''; });
   $('#picker').classList.remove('hidden');
   sfx.pop();
 }
 function closePicker() { pendingWild = -1; $('#picker').classList.add('hidden'); }
+// keep the colour picker open across screen updates while that card can still be played
+function checkPicker(V) {
+  if (pendingWild < 0) return;
+  const ok = V && !V.over && isMyTurn(V) && (pendingWild === AFTER_FLIP ? V.awaitColor : V.my.includes(pendingWild) && R.playable(V, pendingWild, V.viewer));
+  if (!ok) closePicker();
+}
 $('#swatches').addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b || pendingWild < 0) return;
+  const b = e.target.closest('button'); if (!b || pendingWild === -1) return;
   const id = pendingWild;
   closePicker();
-  submit({ type: 'play', card: id, color: +b.dataset.c });
+  if (id === AFTER_FLIP) submit({ type: 'color', color: +b.dataset.c });
+  else submit({ type: 'play', card: id, color: +b.dataset.c });
 });
 $('#btnPickCancel').addEventListener('click', () => { sfx.click(); closePicker(); });
 
@@ -820,7 +883,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   const V = curView();
-  if (pendingWild >= 0 && e.key >= '1' && e.key <= '4') { $$('#swatches button')[+e.key - 1].click(); return; }
+  if (pendingWild !== -1 && e.key >= '1' && e.key <= '4') { $$('#swatches button')[+e.key - 1].click(); return; }
   if (e.key === ' ' || e.key === 'd' || e.key === 'D') { e.preventDefault(); arena.onDeck(); }
   else if (/^[lLcC]$/.test(e.key) && !$('#btnLast').classList.contains('hidden')) $('#btnLast').click();
   else if (/^[0-9]$/.test(e.key) && isMyTurn(V)) {
@@ -949,6 +1012,7 @@ function openSettings() {
   $$('#segQuality button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.quality));
   syncViewChips();
   $$('#segSpeed button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.speed));
+  syncSpecial();
   overlay('scrSettings');
 }
 $('#btnSettings').addEventListener('click', () => { sfx.unlock(); sfx.click(); openSettings(); });
@@ -964,6 +1028,23 @@ $('#setSound').addEventListener('change', (e) => { setAudio('sound', e.target.ch
 $('#setVoice').addEventListener('change', (e) => { setAudio('voice', e.target.checked); if (e.target.checked) sfx.voice('last'); });
 $('#setMusic').addEventListener('change', (e) => setAudio('music', e.target.checked));
 $('#setVibrate').addEventListener('change', (e) => { settings.vibrate = e.target.checked; sfx.vibrate = settings.vibrate; store.set(SET_KEY, settings); sfx.buzz(30); });
+// how often special cards (Skip, Reverse, Pick 2/4, colour cards, Flip...) come up after a shuffle
+const SPECIAL_NOTE = {
+  low: 'Normal shuffle · about 30% of your cards are special',
+  medium: 'Special cards 2.5× as likely · about 50% of your cards',
+  high: 'Special cards 5× as likely · about 65% of your cards',
+};
+function syncSpecial() {
+  $$('#segSpecial button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.special));
+  $('#specialNote').textContent = SPECIAL_NOTE[settings.special] + (S && S.mode !== 'guest' ? ' (from the next game)' : '');
+}
+$('#segSpecial').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  sfx.click();
+  settings.special = b.dataset.v;
+  store.set(SET_KEY, settings);
+  syncSpecial();
+});
 $('#segView').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { sfx.click(); setView(b.dataset.v); } });
 $('#segOrient').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { sfx.click(); setOrient(b.dataset.v); } });
 $('#segQuality').addEventListener('click', (e) => {
@@ -985,19 +1066,30 @@ $('#btnSettingsClose').addEventListener('click', () => { sfx.click(); closeOverl
 
 // help
 function openHelp() {
-  const c = R.normalizeCfg(S?.cfg || setup);
+  const c = S?.cfg ? R.normalizeCfg(S.cfg) : setupCfg();
   $('#helpBody').innerHTML = `
     <p>Be the first to <b>empty your hand</b>. Play a card that matches the top of the pile by <b>colour</b> or by <b>number / symbol</b>. If you can't, tap the draw pile.</p>
+    ${c.mode === 'flip' ? `
+    <p><b>Color Card Flip:</b> every card has a <b>light side</b> (red, yellow, green, blue) and a <b>dark side</b> (pink, teal, orange, purple). You can see the other side of your opponents' cards and of the top of the draw pile.</p>
+    <div class="legend">
+      <i style="--violet:#1e6fd9">⟲</i><span><b>Flip</b>: everything turns over: every hand, the draw pile and the discard pile. The card that ends up on top sets the colour (if it's a colour card, the player who flipped picks).</span>
+      <i style="--violet:#e53935">+1</i><span><b>Pick 1</b> (light): the next player draws 1 and misses a turn${c.stack ? ' (or stacks a +1 or Wild +2)' : ''}.</span>
+      <i>+2</i><span><b>Wild Pick 2</b> (light): pick the colour, the next player draws 2 and misses a turn.</span>
+      <i style="--violet:#e8458b">+5</i><span><b>Pick 5</b> (dark): the next player draws 5 and misses a turn${c.stack ? ' (or stacks a +5)' : ''}.</span>
+      <i style="--violet:#00a6a6">⊘⊘</i><span><b>Skip Everyone</b> (dark): everyone else is skipped, you go again.</span>
+      <i>+?</i><span><b>Wild Draw Colour</b> (dark): pick a colour; the next player draws until they get that colour and misses a turn.</span>
+      <i style="--violet:#2e9e44">⇄</i><span><b>Reverse</b> and <b>Skip</b> work as usual; <b>★</b> colour cards on both sides.</span>
+    </div>` : `
     <div class="legend">
       <i style="--violet:#1e6fd9">⊘</i><span><b>Skip</b>: the next player misses a turn.</span>
       <i style="--violet:#2e9e44">⇄</i><span><b>Reverse</b>: play changes direction (with 2 players it acts as Skip).</span>
-      <i style="--violet:#e53935">+2</i><span><b>Draw two</b>: the next player draws 2 and misses a turn${c.stack ? ', unless they stack another +2 or a +4 on it' : ''}.</span>
-      <i>★</i><span><b>Wild</b>: play it on anything and pick the next colour.</span>
-      <i>+4</i><span><b>Wild +4</b>: pick the colour, the next player draws 4 and misses a turn${c.stack ? ' (or stacks a +4)' : ''}.</span>
-    </div>
+      <i style="--violet:#e53935">+2</i><span><b>Pick 2</b>: the next player draws 2 and misses a turn${c.stack ? ', unless they stack another +2 or a +4 on it' : ''}.</span>
+      <i>★</i><span><b>Colour card</b>: play it on anything and pick the next colour.</span>
+      <i>+4</i><span><b>Pick 4</b>: pick the colour, the next player draws 4 and misses a turn${c.stack ? ' (or stacks a +4)' : ''}.</span>
+    </div>`}
     <p><b>Drawing:</b> ${c.drawMode === 'until' ? 'keep drawing until you get a card you can play' : 'draw one card'}. If it fits you can play it straight away, or pass.</p>
     ${c.callRule ? '<p><b>Last card!</b> When you have two cards and are about to play one, tap the big yellow <b>Last card!</b> button first (everyone hears you shout it). Forget, and you draw 2 as a penalty.</p>' : ''}
-    <p><b>Scoring:</b> the round winner scores the cards left in everyone else's hands. Numbers count face value, action cards 20 and wilds 50. ${c.target ? `First to <b>${c.target}</b> points wins the match.` : 'Free play: points keep adding up.'}</p>
+    <p><b>Scoring:</b> the round winner scores the cards left in everyone else's hands. ${c.mode === 'flip' ? 'Numbers count face value; Pick 1 is 10, Reverse / Skip / Flip / Pick 5 are 20, Skip Everyone 30, colour cards 40, Wild Pick 2 50 and Wild Draw Colour 60.' : 'Numbers count face value, action cards 20 and colour cards 50.'} ${c.target ? `First to <b>${c.target}</b> points wins the match.` : 'Free play: points keep adding up.'}</p>
     <p><b>Controls:</b> tap a raised card, or <b>swipe it up</b>, to throw it. <b>Press and hold</b> a card to look at it closely, and tap the discard pile to see its top card. Tap the deck or <b>Draw</b> if nothing fits. Keyboard: Space draws or passes, 1–9 plays your playable cards in order, C or L calls Last card!, Esc opens the menu.</p>`;
   overlay('scrHelp');
 }
@@ -1076,7 +1168,7 @@ async function hostCreate() {
   const net = new HostNet();
   try {
     const code = await net.start();
-    const cfg = R.normalizeCfg(setup);
+    const cfg = setupCfg();
     const seats = Array.from({ length: cfg.np }, (_, i) => (i === 0 ? { name: store.get(NAME_KEY) || 'Host', kind: 'human', host: true } : { name: '', kind: 'open' }));
     S = { mode: 'host', net, code, cfg, seats, level: setup.level, mySeat: 0, started: false, G: null };
     wireHost(net);
@@ -1248,13 +1340,46 @@ function wireGuest(net) {
 // ---------------------------------------------------------------- quick match
 const MM_KEY = 'last3d-mm-np';
 const MM_WAIT = 30; // seconds a table waits for more players before bots fill in
-const mmCfg = (np) => R.normalizeCfg({ np, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, boost: true });
+const mmCfg = (np) => R.normalizeCfg({ mode: mmMode, np, hand: 7, target: 100, stack: true, drawMode: 'one', callRule: true, special: settings.special });
 let mmNp = [2, 3, 4].includes(store.get(MM_KEY)) ? store.get(MM_KEY) : 4;
+let mmMode = setup.variant === 'flip' ? 'flip' : 'classic'; // follows the menu tabs
+// classic and flip players never meet: they use different tables
+const mmTable = (np) => (mmMode === 'flip' ? `flip${np}` : np);
 let mmToken = 0;
 let mmTicker = null;
 let searchClock = null;
 
-function renderMmPick() { $$('#mmPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === mmNp)); }
+function renderMmPick() {
+  $$('#mmPlayers button').forEach((b) => b.classList.toggle('on', +b.dataset.v === mmNp));
+}
+
+// ---------------------------------------------------------------- game tabs (main menu): Color Card / Color Card Flip
+const GAME_INFO = {
+  classic: { name: 'Color Card', tag: 'Match the colour or number · first to empty their hand wins' },
+  flip: { name: 'Color Card Flip', tag: 'Two-sided cards · a Flip turns everything to the dark side' },
+};
+function renderVariant() {
+  const v = setup.variant === 'flip' ? 'flip' : 'classic';
+  $$('#gameTabs button').forEach((b) => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+  $('#scrMenu').classList.toggle('flip', v === 'flip');
+  $('#tagline').textContent = GAME_INFO[v].tag;
+  const chip = `<span class="${v}">${v === 'flip' ? '🌗' : '🃏'} ${GAME_INFO[v].name}</span><small>change it on the main menu</small>`;
+  $('#setupGame').innerHTML = chip;
+  $('#mmGame').innerHTML = chip;
+}
+function setVariant(v) {
+  setup.variant = v;
+  mmMode = v;
+  saveSetup();
+  renderVariant();
+}
+$('#gameTabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === setup.variant) return;
+  sfx.unlock(); sfx.click();
+  setVariant(b.dataset.v);
+  if (b.dataset.v === 'flip') { sfx.voice('flip'); bg.flash('#8e44e8'); } else bg.flash('#1e6fd9');
+});
+renderVariant();
 renderMmPick();
 $('#mmPlayers').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1270,7 +1395,7 @@ async function quickMatch(np) {
   const tok = ++mmToken;
   const alive = () => tok === mmToken;
   const t0 = Date.now();
-  $('#searchMsg').textContent = `Looking for a ${np}-player table`;
+  $('#searchMsg').textContent = `Looking for a ${np}-player ${mmMode === 'flip' ? 'Flip ' : ''}table`;
   $('#searchTime').textContent = '0:00';
   searchClock = setInterval(() => {
     const sec = Math.floor((Date.now() - t0) / 1000);
@@ -1278,7 +1403,7 @@ async function quickMatch(np) {
   }, 1000);
   show('scrSearch');
   try {
-    const r = await findMatch(np, {
+    const r = await findMatch(mmTable(np), {
       cancelled: () => !alive(),
       onStatus: (i) => { if (alive()) $('#searchMsg').textContent = `Looking for a ${np}-player table · checking table ${i + 1}`; },
     });
@@ -1358,7 +1483,7 @@ function maybeMergeDown() {
   if (!mm || !mm.slot || mm.merging || Date.now() - (mm.lastMerge || 0) < 6000) return;
   mm.merging = true;
   mm.lastMerge = Date.now();
-  findLowerTable(mm.np, mm.slot).then((code) => {
+  findLowerTable(mmTable(mm.np), mm.slot).then((code) => {
     mm.merging = false;
     const alone = S?.mm === mm && !S.started && S.seats.filter((x) => x.kind !== 'open').length === 1;
     if (!code || !alone) return;
@@ -1464,4 +1589,4 @@ const roomParam = new URLSearchParams(location.search).get('room');
 if (roomParam) openOnline(roomParam.toUpperCase().slice(0, 5));
 
 // handy for debugging from the console
-window.__last = { arena, R, sfx, animateEvent, get S() { return S; } };
+window.__last = { arena, R, sfx, animateEvent, commit, get S() { return S; }, get busy() { return busy; }, get idle() { return !busy && presenting === 0; }, get screen() { return current; } };

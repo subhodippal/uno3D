@@ -13,7 +13,9 @@ Three ways to play, straight from the menu:
 
 Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards, and if someone drops out a bot takes over.
 
-- **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking +2/+4, draw until playable, must call “Last card!”, and **More action cards**, on by default: after every shuffle Skip, Reverse, +2, +4 and colour cards are 2.5× as likely as a number card to come up, so roughly half the cards you get are action cards instead of 30%).
+- **Two games:** **Color Card** (classic) and **Color Card Flip** (double-sided cards with a light and a dark side, see below). Switch between them with the tabs at the top of the main menu; the choice is used for Single play, Group rooms and Online quick match (Flip players are only matched with Flip players).
+- **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking draw cards, draw until playable, must call “Last card!”).
+- **Special cards after a shuffle** (Settings → Low / Medium / High): how likely Skip, Reverse, Pick 2/4, colour cards (and in Flip: Flip, Pick 1/5, Skip Everyone, Draw Colour) are to come up. Low is a normal shuffle (about 30% special cards in a classic hand), Medium makes them 2.5× as likely (about 50%), High 5× (about 65%).
 - **3D meadow:** lime grass, low-poly trees, bushes and flowers, and soft sun shadows under the cards.
 - **2D / 3D and Portrait / Landscape:** buttons at the top of the menu and the game (also in Settings). 2D looks straight down on the table. On phones you can force portrait or landscape: Android goes fullscreen and locks the rotation; on iPhone (which can't lock it) the game turns itself sideways.
 - **Direction circle:** a white energy ring around the piles with lightning streaks racing clockwise or anticlockwise in the current colour (they turn red when someone picks red on a wild). A Reverse flashes the ring, throws sparks off it and whips the lightning round the other way. The badge at the top shows the colour and the direction too.
@@ -32,6 +34,22 @@ Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Ev
 - Can't play? Draw one card (or keep drawing, with "draw until playable"). If the drawn card fits, you can play it right away or pass.
 - With two cards left, tap the big **Last card!** button before you play — a male voice shouts “Last card!” for everyone. Forget, and you draw 2.
 - The round winner scores the cards left in the other hands: numbers count face value, action cards 20 and wilds 50.
+
+### Color Card Flip
+
+Every card has a **light side** (red, yellow, green, blue) and a **dark side** (pink, teal, orange, purple). The game starts on the light side. You can see the other side of your opponents' cards and of the top card of the draw pile.
+
+| Light side | Dark side |
+|---|---|
+| Numbers 1–9 | Numbers 1–9 |
+| **Pick 1**: next player draws 1 and misses a turn | **Pick 5**: next player draws 5 and misses a turn |
+| Reverse, Skip | Reverse, **Skip Everyone** (you play again) |
+| **Flip** | **Flip** |
+| Colour card, **Wild Pick 2** | Colour card, **Wild Draw Colour** (next player draws until they get the colour you name, and misses a turn) |
+
+**Flip** turns everything over: every hand, the draw pile and the discard pile (as stacks, like the real cards). The card that ends up on top of the discard pile sets the colour; if it is a colour card, the player who flipped picks the colour. The table turns to dusk while the dark side is in play.
+
+Scoring: numbers count face value; Pick 1 is 10; Reverse, Skip, Flip and Pick 5 are 20; Skip Everyone 30; colour cards 40; Wild Pick 2 50; Wild Draw Colour 60.
 
 **Controls:** tap a raised card or swipe it up to throw it, press and hold to look at a card, and tap the deck or **Draw** if nothing fits. On a keyboard, Space draws or passes, 1–9 plays your playable cards in order, C or L calls Last card!, and Esc opens the menu.
 
@@ -58,7 +76,7 @@ All paths are relative, so any repo name works. **After each deploy, bump `VERSI
 ```
 index.html            UI shell (menus, HUD, setup with seat rows)
 css/style.css         Mobile-first light theme styles
-js/rules.js           Pure rules engine (deck, actions, scoring, per-player views)
+js/rules.js           Pure rules engine (classic and flip decks, actions, scoring, per-player views)
 js/ai.js              Computer opponents
 js/scene.js           three.js meadow, card art (canvas textures), held hand, gestures, animations
 js/main.js            Controller: modes, turns, pass & play, online sync, effects
