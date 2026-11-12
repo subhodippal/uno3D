@@ -30,7 +30,12 @@ export const SEATS = [
   { name: 'Orange', css: '#f57c00', hex: 0xf57c00 },
   { name: 'Teal', css: '#00897b', hex: 0x00897b },
   { name: 'Pink', css: '#d81b60', hex: 0xd81b60 },
+  { name: 'Indigo', css: '#3949ab', hex: 0x3949ab },
+  { name: 'Lime', css: '#689f38', hex: 0x689f38 },
+  { name: 'Brown', css: '#8d6e63', hex: 0x8d6e63 },
+  { name: 'Cyan', css: '#0097a7', hex: 0x0097a7 },
 ];
+export const MAX_PLAYERS = 8; // rooms; single play and quick match go up to 4
 
 // ---------------------------------------------------------------- decks
 // classic: per colour one 0, two each of 1-9, Skip, Reverse, +2; plus 4 Wild and 4 Wild +4
@@ -117,7 +122,7 @@ export function normalizeCfg(c = {}) {
   if (!SPECIAL_ODDS[special]) special = c.boost === false ? 'low' : 'medium';
   return {
     mode: c.mode === 'flip' ? 'flip' : 'classic',
-    np: Math.max(2, Math.min(4, Math.round(+c.np || 2))),
+    np: Math.max(2, Math.min(MAX_PLAYERS, Math.round(+c.np || 2))),
     hand: HANDS.includes(+c.hand) ? +c.hand : 7,
     target: TARGETS.includes(+c.target) ? +c.target : 100,
     stack: c.stack !== false,

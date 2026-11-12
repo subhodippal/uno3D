@@ -19,6 +19,10 @@ const SAVE_KEY = 'last3d-save';
 const SET_KEY = 'last3d-settings';
 const SETUP_KEY = 'last3d-setup';
 const NAME_KEY = 'last3d-name';
+const ROOM_KEY = 'last3d-room';    // the online room this device is in (to get back in after a reload)
+const CID_KEY = 'last3d-cid';      // this device's id, so a host recognises a returning player
+const AWAY_TURN_MS = 15000;        // a disconnected player's turn waits this long, then a bot plays it
+const AWAY_DROP_MS = 180000;       // gone this long: a bot takes the seat for good
 const EMOJIS = ['👏', '😂', '😮', '🔥', '😭', '😎', '🤯', '💀'];
 
 const store = {
@@ -27,6 +31,8 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
 
+const CID = store.get(CID_KEY) || (() => { const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join(''); store.set(CID_KEY, id); return id; })();
+const savedName = () => store.get(NAME_KEY) || '';
 const lowEnd = (navigator.hardwareConcurrency || 4) <= 2;
 const settings = Object.assign({ special: 'medium', view: '3d', orient: 'auto', sound: true, voice: true, music: true, muted: false, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
 // the HUD speaker button mutes everything; the settings screen switches each part
@@ -188,6 +194,8 @@ function openSetup(mode) {
 // game config from the setup screen (setup.mode is the screen mode: 'cpu' or 'host')
 function setupCfg() { return R.normalizeCfg({ ...setup, mode: setup.variant, special: settings.special }); }
 function renderSetup() {
+  if (setup.mode !== 'host' && setup.np > 4) setup.np = 4;
+  $$('#pickPlayers .room-only').forEach((b) => b.classList.toggle('hidden', setup.mode !== 'host'));
   const { mode: variant, special, ...c } = setupCfg();
   Object.assign(setup, c);
   setup.variant = variant;
@@ -205,7 +213,7 @@ function renderSetup() {
       const k = setup.kinds[s];
       const dn = defaultName(s, k, kinds);
       return `<div class="seat" style="--c:${seatCss(s)}">${avatar(s, setup.names[s] || dn)}
-        <input data-seat="${s}" maxlength="12" value="${esc(setup.names[s] || '')}" placeholder="${esc(dn)}" aria-label="Player ${s + 1} name">
+        <input data-seat="${s}" maxlength="12" value="${esc((k === 'human' ? setup.names[s] || savedName() : setup.names[s]) || '')}" placeholder="${esc(k === 'human' ? 'Your name' : dn)}" aria-label="Player ${s + 1} name">
         <span class="role">${k === 'human' ? 'You' : '🤖 Bot'}</span></div>`;
     }).join('');
   }
@@ -238,8 +246,11 @@ $('#seatRows').addEventListener('click', (e) => {
 });
 $('#seatRows').addEventListener('input', (e) => {
   const i = e.target.closest('input'); if (!i) return;
-  setup.names[+i.dataset.seat] = i.value.trim().slice(0, 12);
+  const k = +i.dataset.seat;
+  setup.names[k] = i.value.trim().slice(0, 12);
+  if (setup.kinds[k] === 'human') store.set(NAME_KEY, setup.names[k]); // your name, remembered for next time
 });
+$('#inpName').addEventListener('input', () => store.set(NAME_KEY, $('#inpName').value.trim().slice(0, 12)));
 
 $('#btnStart').addEventListener('click', () => {
   sfx.unlock(); sfx.click();
@@ -247,7 +258,7 @@ $('#btnStart').addEventListener('click', () => {
   if (setup.mode === 'host') return hostCreate();
   const cfg = setupCfg();
   const kinds = setup.kinds.slice(0, cfg.np);
-  const seats = kinds.map((k, s) => ({ name: (k === 'human' && setup.names[s]) || defaultName(s, k, kinds), kind: k }));
+  const seats = kinds.map((k, s) => ({ name: (k === 'human' && (setup.names[s] || savedName())) || defaultName(s, k, kinds), kind: k }));
   startSession({ mode: 'local', cfg, seats, level: setup.level, G: R.newGame(cfg, { starter: Math.floor(Math.random() * cfg.np) }) });
 });
 
@@ -288,6 +299,7 @@ function isMyTurn(V) {
   const me = viewerSeat();
   if (me < 0 || V.turn !== me) return false;
   if (S.mode === 'local') return S.seats[me]?.kind === 'human';
+  if (S.reconnecting) return false;
   return true;
 }
 
@@ -317,9 +329,22 @@ function enterGame() {
 }
 
 function persist() {
+  if (S?.mode === 'host') { saveRoom(); return; }
   if (S?.mode !== 'local') return;
   store.set(SAVE_KEY, { cfg: S.cfg, seats: S.seats, level: S.level, G: S.G, viewer: S.viewer });
 }
+
+// online: remember the room so a reload (or a dropped connection) gets you back in
+function saveRoom() {
+  if (!S || S.mode === 'local' || !S.code) return;
+  if (S.mode === 'guest') { store.set(ROOM_KEY, { role: 'guest', code: S.code, at: Date.now() }); return; }
+  if (S.mm && !S.started) return; // a quick-match table that hasn't started isn't worth reopening
+  store.set(ROOM_KEY, {
+    role: 'host', code: S.code, cfg: S.cfg, level: S.level, started: !!S.started, G: S.G, at: Date.now(),
+    seats: S.seats.map(({ peer, ...rest }) => rest),
+  });
+}
+const clearRoom = () => store.del(ROOM_KEY);
 
 // Host / local authority: apply an action, then share and show it
 function commit(seat, a) {
@@ -583,15 +608,20 @@ function callout(title, sub, css, voice, queue = false) {
 
 function renderTags(V) {
   if (!S) { $('#tags').innerHTML = ''; return; }
+  $('#tags').classList.toggle('many', V.np > 4);
+  // big "your turn" marker over your hand
+  const meTurn = V.viewer >= 0 && !V.over && V.turn === V.viewer && !hidden();
+  $('#myTurn').classList.toggle('hidden', !meTurn);
+  $('#myTurn').style.setProperty('--c', seatCss(Math.max(0, V.viewer)));
   const me = V.viewer;
   const handMode = me >= 0;
   $('#tags').innerHTML = S.seats.map((seat, s) => {
     if (handMode && s === me) return '';
     const on = V.over ? V.over.winner === s : V.turn === s;
     const thinking = on && !V.over && (seat.kind === 'cpu' || (S.mode !== 'local' && s !== S.mySeat));
-    const sub = seat.left ? 'Left · Bot' : `${V.scores[s]} pts`;
-    return `<div class="seat-tag ${on ? 'on' : ''} ${seat.left ? 'gone' : ''}" data-seat="${s}" style="--c:${seatCss(s)}">
-      ${avatar(s, seat.name)}<span class="nm"><b class="${thinking ? 'thinking' : ''}">${esc(seat.name)}</b><small>${esc(sub)}</small></span>
+    const sub = seat.away ? 'Reconnecting…' : seat.left ? 'Left · Bot' : `${V.scores[s]} pts`;
+    return `<div class="seat-tag ${on ? 'on' : ''} ${seat.left || seat.away ? 'gone' : ''}" data-seat="${s}" style="--c:${seatCss(s)}">
+      ${on && !V.over ? '<span class="turn-mark" aria-label="Their turn">▼</span>' : ''}${avatar(s, seat.name)}<span class="nm"><b class="${thinking ? 'thinking' : ''}">${esc(seat.name)}</b><small>${esc(sub)}</small></span>
       <span class="cnt">${V.counts[s]}</span>${V.counts[s] === 1 && !V.over ? '<span class="one">1 CARD</span>' : ''}</div>`;
   }).join('');
   placeTags();
@@ -634,7 +664,7 @@ function setTurnUI(V) {
     else if (V.drawn >= 0) text = 'Play it or pass';
     else text = ids.length ? 'Your turn' : 'No match · draw';
   } else if (S.mode === 'local' && seat.kind === 'human') text = `${seat.name}'s turn`;
-  else text = seat.kind === 'cpu' ? `${seat.name} is thinking` : `Waiting for ${seat.name}`;
+  else text = seat.kind === 'cpu' ? `${seat.name} is thinking` : seat.away ? `${seat.name} is reconnecting` : `Waiting for ${seat.name}`;
   const showCount = me >= 0 && !hidden();
   $('#status').innerHTML = `<span class="av" style="--c:${seatCss(V.turn)}"></span><span class="${mine ? '' : 'dots'}">${esc(text)}</span>${showCount ? `<small style="opacity:.6;margin-left:4px">· ${V.my.length}</small>` : ''}`;
   updateButtons(V, ids);
@@ -763,11 +793,20 @@ function maybeCpu() {
   clearTimeout(cpuTimer);
   if (!S || S.mode === 'guest' || paused) return;
   const G = S.G;
-  if (!G || G.over || S.seats[G.turn]?.kind !== 'cpu') return;
-  const delay = cpuDelay() * (0.75 + Math.random() * 0.5);
+  if (!G || G.over) return;
+  const auto = (st) => st?.kind === 'cpu' || (st?.kind === 'remote' && st.away);
+  const who = S.seats[G.turn];
+  if (!auto(who)) return;
+  // a disconnected player gets time to come back before a bot plays this one turn for them
+  const delay = who.kind === 'cpu' ? cpuDelay() * (0.75 + Math.random() * 0.5) : AWAY_TURN_MS;
   cpuTimer = setTimeout(() => {
-    if (!S || paused || busy || S.G.over || S.seats[S.G.turn]?.kind !== 'cpu') return;
+    if (!S || paused || busy || S.G.over || !auto(S.seats[S.G.turn])) return;
     const seat = S.G.turn;
+    const st = S.seats[seat];
+    if (st.kind === 'remote' && Date.now() - (st.awaySince || 0) > AWAY_DROP_MS) {
+      S.seats[seat] = { name: st.name, kind: 'cpu', left: true, cid: st.cid };
+      toast(`${st.name} didn't come back. A bot takes over.`, 3000);
+    }
     const a = chooseAction(S.G, seat, S.level);
     if (!commit(seat, a)) commit(seat, S.G.drawn >= 0 ? { type: 'pass' } : { type: 'draw' });
   }, delay);
@@ -798,6 +837,8 @@ function rejectCard() {
 }
 arena.onReject = () => rejectCard();
 arena.onPeek = (id) => $('#tags').classList.toggle('peeking', id >= 0);
+// a card raised for a closer look: keep the "your turn" label out of its way
+arena.onHover = (id) => $('#myTurn').classList.toggle('dim', id >= 0);
 arena.onPile = () => { sfx.unlock(); if (arena.peekPile()) sfx.flip(); };
 arena.onCard = (id) => {
   sfx.unlock();
@@ -914,7 +955,7 @@ function openPause() {
   if (S.mode === 'local') { paused = true; clearTimeout(cpuTimer); }
   closePicker();
   const V = curView();
-  $('#pauseRule').textContent = `${R.describe(S.cfg)} · Round ${V?.round || 1}`;
+  $('#pauseRule').textContent = `${S.code ? `Room ${S.code} · ` : ''}${R.describe(S.cfg)} · Round ${V?.round || 1}`;
   $('#pauseScores').innerHTML = V ? S.seats.map((seat, s) => `<div class="seat" style="--c:${seatCss(s)}">${avatar(s, seat.name)}
     <div class="info"><b>${esc(seat.name)}</b><span class="sub">${V.counts[s]} cards${seat.kind === 'cpu' ? ' · Bot' : ''}</span></div><span class="pts">${V.scores[s]}</span></div>`).join('') : '';
   $('#btnRestart').classList.toggle('hidden', S.mode === 'guest');
@@ -966,7 +1007,15 @@ function goMenu() {
   clearTimeout(guestTimer);
   stopSearch();
   endMatchmaking();
-  if (S?.net) { try { S.net.close(); } catch { /* ignore */ } }
+  reconnTok++;
+  setNetStatus(null);
+  clearRoom();
+  if (S?.net) {
+    // tell the others this is on purpose, so nobody waits for us to come back
+    const net = S.net;
+    try { if (S.mode === 'guest') net.send({ t: 'bye' }); else if (S.mode === 'host') net.broadcast({ t: 'end' }); } catch { /* ignore */ }
+    setTimeout(() => { try { net.close(); } catch { /* ignore */ } }, 300);
+  }
   S = null;
   paused = false;
   busy = false;
@@ -1117,7 +1166,7 @@ $('#btnCreate').addEventListener('click', () => { sfx.click(); myName(); openSet
 $('#btnJoin').addEventListener('click', () => { sfx.unlock(); sfx.click(); guestJoin(); });
 $('#inpCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') guestJoin(); });
 
-const pubSeats = () => S.seats.map((s) => ({ name: s.name, kind: s.kind === 'remote' ? 'human' : s.kind, host: !!s.host, left: !!s.left }));
+const pubSeats = () => S.seats.map((s) => ({ name: s.name, kind: s.kind === 'remote' ? 'human' : s.kind, host: !!s.host, left: !!s.left, away: !!s.away }));
 
 function roomLink() { return location.origin + location.pathname + '?room=' + S.code; }
 async function shareRoom() {
@@ -1172,6 +1221,7 @@ async function hostCreate() {
     const seats = Array.from({ length: cfg.np }, (_, i) => (i === 0 ? { name: store.get(NAME_KEY) || 'Host', kind: 'human', host: true } : { name: '', kind: 'open' }));
     S = { mode: 'host', net, code, cfg, seats, level: setup.level, mySeat: 0, started: false, G: null };
     wireHost(net);
+    saveRoom();
     renderLobby();
     show('scrLobby');
   } catch (e) {
@@ -1188,15 +1238,39 @@ function wireHost(net) {
   net.on('message', (peer, msg) => {
     if (!S || S.net !== net || !msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
+      const cid = typeof msg.cid === 'string' ? msg.cid.slice(0, 40) : '';
+      // a player coming back (reload, or a dropped connection) gets their own seat again
+      const back = cid ? S.seats.findIndex((x) => x.cid === cid && (x.kind === 'remote' || (x.kind === 'cpu' && x.left))) : -1;
+      if (back >= 0) {
+        const old = S.seats[back];
+        if (old.peer && old.peer !== peer) net.kick(old.peer);
+        S.seats[back] = { name: old.name, kind: 'remote', peer, cid };
+        net.send(peer, { t: 'welcome', seat: back, cfg: S.cfg, seats: pubSeats(), code: S.code, started: !!S.started });
+        if (S.started) {
+          net.send(peer, { t: 'start', cfg: S.cfg, seats: pubSeats(), code: S.code });
+          broadcastState();
+          toast(`${old.name} is back`, 1800);
+          const V = curView();
+          renderTags(V);
+          if (!V.over && !busy) setTurnUI(V);
+          maybeCpu();
+        } else {
+          net.broadcast({ t: 'lobby', cfg: S.cfg, seats: pubSeats() });
+          renderLobby();
+        }
+        saveRoom();
+        return;
+      }
       if (S.started) { net.send(peer, { t: 'reject', msg: 'That game has already started.' }); setTimeout(() => net.kick(peer), 300); return; }
-      const k = S.seats.findIndex((s) => s.kind === 'open');
+      const k = S.seats.findIndex((x) => x.kind === 'open');
       if (k < 0) { net.send(peer, { t: 'reject', msg: 'That room is full.' }); setTimeout(() => net.kick(peer), 300); return; }
       const name = String(msg.name || '').trim().slice(0, 12) || `Player ${k + 1}`;
-      S.seats[k] = { name, kind: 'remote', peer };
+      S.seats[k] = { name, kind: 'remote', peer, cid };
       net.send(peer, { t: 'welcome', seat: k, cfg: S.cfg, seats: pubSeats(), code: S.code });
       net.broadcast({ t: 'lobby', cfg: S.cfg, seats: pubSeats() });
       sfx.pop();
       renderLobby();
+      saveRoom();
       return;
     }
     const seat = seatOf(peer);
@@ -1209,21 +1283,39 @@ function wireHost(net) {
     } else if (msg.t === 'emoji') {
       net.broadcast({ t: 'emoji', seat, e: msg.e });
       flyEmoji(seat, msg.e);
+    } else if (msg.t === 'bye') { // left on purpose
+      const name = S.seats[seat].name;
+      if (S.started) {
+        S.seats[seat] = { name, kind: 'cpu', left: true };
+        toast(`${name} left. A bot takes over.`, 3000);
+        afterSeatChange();
+      } else {
+        S.seats[seat] = { name: '', kind: 'open' };
+        net.broadcast({ t: 'lobby', cfg: S.cfg, seats: pubSeats() });
+        renderLobby();
+      }
+      saveRoom();
+      net.kick(peer);
     }
   });
+  const afterSeatChange = () => {
+    broadcastState();
+    const V = curView();
+    renderTags(V);
+    if (!V.over && !busy) setTurnUI(V);
+    maybeCpu();
+  };
   net.on('leave', (peer) => {
     if (!S || S.net !== net) return;
     const k = seatOf(peer);
     if (k < 0) return;
     const name = S.seats[k].name;
     if (S.started) {
-      S.seats[k] = { name, kind: 'cpu', left: true };
-      toast(`${name} left. A bot takes over.`, 3000);
-      broadcastState();
-      const V = curView();
-      renderTags(V);
-      if (!V.over && !busy) setTurnUI(V);
-      maybeCpu();
+      // connection lost (bad signal, reload...): keep the seat and wait for them to come back
+      S.seats[k] = { ...S.seats[k], peer: null, away: true, awaySince: Date.now() };
+      toast(`${name} lost connection · waiting for them`, 2600);
+      saveRoom();
+      afterSeatChange();
     } else {
       S.seats[k] = { name: '', kind: 'open' };
       net.broadcast({ t: 'lobby', cfg: S.cfg, seats: pubSeats() });
@@ -1242,7 +1334,32 @@ function startOnlineGame() {
   S.G = R.newGame(S.cfg, { starter: Math.floor(Math.random() * S.cfg.np) });
   S.net.broadcast({ t: 'start', cfg: S.cfg, seats: pubSeats(), code: S.code });
   broadcastState();
+  saveRoom();
   enterGame();
+}
+
+// the host reloaded: reopen the same room code and carry on (guests reconnect by themselves)
+async function hostRestore(rec) {
+  message('Reopening your room…', `Room ${rec.code} · getting everyone back`, () => goMenu());
+  $('#btnMsgOk').textContent = 'Cancel';
+  const net = new HostNet();
+  try {
+    await net.start(rec.code);
+  } catch (e) {
+    net.close();
+    if (current !== 'scrMsg') return; // cancelled
+    clearRoom();
+    message('Could not reopen the room', e.message || 'Try again in a minute.');
+    return;
+  }
+  if (current !== 'scrMsg') { net.close(); return; } // cancelled meanwhile
+  $('#btnMsgOk').textContent = 'OK';
+  const seats = rec.seats.map((x) => (x.kind === 'remote' ? { ...x, peer: null, away: true, awaySince: Date.now() } : x));
+  S = { mode: 'host', net, code: rec.code, cfg: R.normalizeCfg(rec.cfg), seats, level: rec.level || 'normal', mySeat: 0, started: !!rec.started, G: rec.G };
+  wireHost(net);
+  saveRoom();
+  if (S.started && S.G) enterGame();
+  else { renderLobby(); show('scrLobby'); }
 }
 
 // every guest gets their own view (other hands stay secret)
@@ -1267,7 +1384,7 @@ async function guestJoin(codeArg, opts = {}) {
     await net.join(code);
     S = { mode: 'guest', net, code, cfg: null, seats: [], mySeat: -1, V: null };
     wireGuest(net);
-    net.send({ t: 'hello', name });
+    net.send({ t: 'hello', name, cid: CID });
   } catch (e) {
     net.close();
     $('#onlineMsg').textContent = e.message || 'Could not join';
@@ -1277,14 +1394,75 @@ async function guestJoin(codeArg, opts = {}) {
   }
 }
 
+// try to get back into a room for a while (the host may be reloading, or our signal is weak)
+let reconnTok = 0;
+async function guestReconnect(code, timeout = 120000) {
+  const tok = ++reconnTok;
+  const t0 = Date.now();
+  setNetStatus('Reconnecting…');
+  while (Date.now() - t0 < timeout) {
+    if (tok !== reconnTok) return false;
+    const net = new ClientNet();
+    try {
+      await net.join(code);
+      if (tok !== reconnTok) { net.close(); return false; }
+      if (!S || S.code !== code) S = { mode: 'guest', net, code, cfg: null, seats: [], mySeat: -1, V: null };
+      S.net = net;
+      S.resync = true;
+      wireGuest(net);
+      net.send({ t: 'hello', name: savedName() || 'Player', cid: CID });
+      setNetStatus('Rejoining…');
+      return true;
+    } catch {
+      net.close();
+    }
+    setNetStatus(`Reconnecting… ${Math.max(0, Math.round((timeout - (Date.now() - t0)) / 1000))}s`);
+    await sleep(2500);
+  }
+  if (tok === reconnTok) setNetStatus(null);
+  return false;
+}
+
+function setNetStatus(text) {
+  const el = $('#netStatus');
+  el.classList.toggle('hidden', !text);
+  if (text) el.querySelector('span').textContent = text;
+}
+
+function roomClosed(text) {
+  reconnTok++;
+  setNetStatus(null);
+  clearRoom();
+  try { S?.net?.close(); } catch { /* ignore */ }
+  S = null;
+  $('#hud').classList.add('hidden');
+  $('#tags').innerHTML = '';
+  message('Room closed', text);
+}
+
+// after a reload: back into the room we were in
+async function guestRestore(rec) {
+  message('Rejoining the room…', `Room ${rec.code}`, () => goMenu());
+  $('#btnMsgOk').textContent = 'Cancel';
+  const ok = await guestReconnect(rec.code, 60000);
+  if (!ok && current === 'scrMsg') { clearRoom(); $('#btnMsgOk').textContent = 'OK'; message('Room closed', `Could not get back into room ${rec.code}.`); }
+}
+
 function wireGuest(net) {
   net.on('message', (msg) => {
     if (!S || S.net !== net || !msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'welcome':
         S.mySeat = msg.seat; S.cfg = R.normalizeCfg(msg.cfg); S.seats = msg.seats;
+        S.reconnecting = false;
+        setNetStatus(null);
+        saveRoom();
+        if (msg.started) { S.started = true; break; } // back into a running game: the state follows
         sfx.pop();
         renderLobby(); show('scrLobby');
+        break;
+      case 'end':
+        roomClosed('The host ended the game.');
         break;
       case 'lobby':
         S.cfg = R.normalizeCfg(msg.cfg); S.seats = msg.seats;
@@ -1300,6 +1478,10 @@ function wireGuest(net) {
         S.seats = msg.seats || S.seats;
         const first = !S.V;
         S.V = msg.V;
+        S.reconnecting = false;
+        setNetStatus(null);
+        if (S.resync && !first && !$('#hud').classList.contains('hidden')) { S.resync = false; present(S.V, true); break; }
+        S.resync = false;
         if (first || $('#hud').classList.contains('hidden')) enterGame();
         else {
           if (current === 'scrRound' && !S.V.over) hideScreens();
@@ -1318,6 +1500,7 @@ function wireGuest(net) {
         const mm = S.mm;
         S.net.close();
         S = null;
+        clearRoom();
         if (mm) { toast('That table just filled up. Searching again…', 2200); quickMatch(mm.np); break; }
         message('Can’t join', msg.msg || 'Room unavailable', () => openOnline());
         break;
@@ -1325,14 +1508,17 @@ function wireGuest(net) {
       default:
     }
   });
-  net.on('close', () => {
+  net.on('close', async () => {
     if (!S || S.net !== net) return;
     const mm = S.mm && !S.started ? S.mm : null;
-    S = null;
-    if (mm) { toast('The host left. Searching again…', 2200); quickMatch(mm.np); return; }
-    $('#hud').classList.add('hidden');
-    $('#tags').innerHTML = '';
-    message('Room closed', 'The host left the game.');
+    if (mm) { S = null; clearRoom(); toast('The host left. Searching again…', 2200); quickMatch(mm.np); return; }
+    // dropped (bad signal, or the host is reloading): keep trying to get back in
+    S.reconnecting = true;
+    arena.setInteractive(false);
+    updateButtons(null);
+    const code = S.code;
+    const ok = await guestReconnect(code);
+    if (!ok && S && S.code === code && S.reconnecting) roomClosed('Lost the connection to the room.');
   });
   net.on('error', (m) => toast(m, 3000));
 }
@@ -1508,7 +1694,8 @@ async function mmJoin(code, np) {
     await net.join(code);
     S = { mode: 'guest', net, code, cfg: null, seats: [], mySeat: -1, V: null, mm: { np } };
     wireGuest(net);
-    net.send({ t: 'hello', name: store.get(NAME_KEY) || 'Player' });
+    net.send({ t: 'hello', name: store.get(NAME_KEY) || 'Player', cid: CID });
+    saveRoom();
   } catch {
     net.close();
     quickMatch(np);
@@ -1586,7 +1773,12 @@ measureBottom();
 startDemo();
 
 const roomParam = new URLSearchParams(location.search).get('room');
-if (roomParam) openOnline(roomParam.toUpperCase().slice(0, 5));
+const roomRec = store.get(ROOM_KEY);
+if (roomRec && Date.now() - (roomRec.at || 0) > 6 * 3600e3) clearRoom();
+const fresh = roomRec && Date.now() - (roomRec.at || 0) <= 6 * 3600e3 && roomRec.code && (!roomParam || roomParam.toUpperCase() === roomRec.code);
+if (fresh && roomRec.role === 'host') hostRestore(roomRec);
+else if (fresh && roomRec.role === 'guest') guestRestore(roomRec);
+else if (roomParam) openOnline(roomParam.toUpperCase().slice(0, 5));
 
 // handy for debugging from the console
 window.__last = { arena, R, sfx, animateEvent, commit, get S() { return S; }, get busy() { return busy; }, get idle() { return !busy && presenting === 0; }, get screen() { return current; } };

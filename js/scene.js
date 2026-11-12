@@ -16,6 +16,7 @@ const PILE_KEEP = 14, PILE_Y0 = 0.02, PILE_DY = 0.006; // cards kept on the disc
 const HAND_D = 6;
 const FAN_S = 0.62;
 const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
+const QI = new THREE.Quaternion();
 const FONT = '"Fredoka", "Arial Rounded MT Bold", "Arial Black", system-ui, sans-serif';
 const INK = '#1d1d1f';
 
@@ -767,16 +768,37 @@ export class Arena {
   }
 
   // ---------------------------------------------------------------- seats & layout
-  _relSlot(seat) {
+  _relIndex(seat) {
     const base = this.viewer >= 0 ? this.viewer : 0;
-    const r = (seat - base + this.np) % this.np;
+    return (seat - base + this.np) % this.np;
+  }
+
+  // 5-8 players: opponents sit on an arc from the left, over the top, to the right
+  // (in turn order, so play still runs clockwise round the screen)
+  _arcAngle(seat) {
+    const r = this._relIndex(seat), m = this.np - 1;
+    const t = m > 1 ? (r - 1) / (m - 1) : 0.5;
+    return Math.PI * 1.12 - t * Math.PI * 1.24;
+  }
+
+  _relSlot(seat) {
+    const r = this._relIndex(seat);
+    if (this.np > 4) {
+      if (r === 0) return 'bottom';
+      const c = Math.cos(this._arcAngle(seat));
+      return c < -0.55 ? 'left' : c > 0.55 ? 'right' : 'top';
+    }
     const names = { 2: ['bottom', 'top'], 3: ['bottom', 'left', 'right'], 4: ['bottom', 'left', 'top', 'right'] }[this.np] || ['bottom'];
     return names[r];
   }
 
   _anchor(seat) {
     const portrait = this.camera.aspect < 1;
-    const ndc = {
+    let ndc;
+    if (this.np > 4 && this._relIndex(seat) > 0) {
+      const a = this._arcAngle(seat);
+      ndc = [Math.cos(a) * (portrait ? 0.7 : 0.74), (portrait ? 0.06 : 0.05) + Math.sin(a) * (portrait ? 0.38 : 0.45)];
+    } else ndc = {
       bottom: [0, -0.5],
       top: [0, portrait ? 0.42 : 0.5],
       left: this.np === 3 ? [-0.5, portrait ? 0.32 : 0.36] : [-0.66, portrait ? 0.04 : 0.02],
@@ -792,10 +814,11 @@ export class Arena {
     const a = this._anchor(seat);
     const u = new THREE.Vector3(-a.x, 0, -a.z).normalize();
     const t = new THREE.Vector3(u.z, 0, -u.x);
-    const show = Math.min(n, 14);
+    const crowd = this.np > 4;
+    const show = Math.min(n, crowd ? 9 : 14);
     const side = this._relSlot(seat) === 'left' || this._relSlot(seat) === 'right';
-    const span = side ? 0.2 : 0.26;
-    const s = FAN_S * Math.min(1.35, Math.max(1, a.length() / 4.5));
+    const span = (side ? 0.2 : 0.26) * (crowd ? 0.8 : 1);
+    const s = FAN_S * Math.min(1.35, Math.max(1, a.length() / 4.5)) * (crowd ? 0.72 : 1);
     const yaw = Math.atan2(u.x, u.z);
     const out = [];
     for (let i = 0; i < n; i++) {
@@ -1357,9 +1380,31 @@ export class Arena {
     });
     cv.addEventListener('pointermove', (e) => {
       if (down && down.id === e.pointerId && down.card >= 0) {
-        const q = view.pt(e);
-        const dx = q.x - down.x, dy = q.y - down.y;
-        if (Math.hypot(dx, dy) > 10) down.moved = true;
+        let q = view.pt(e);
+        let dx = q.x - down.x, dy = q.y - down.y;
+        // holding a card up big and sliding: browse the hand at full size
+        if (this.peekId >= 0) {
+          const under = this._pickCard(e);
+          if (under >= 0 && under !== this.peekId) {
+            down.card = under; this.peekId = under; this.hover = under; this.drag = { id: under, dx: 0, dy: 0 };
+            this._sfx?.('flick');
+            this.onPeek?.(under);
+          }
+          return;
+        }
+        // sliding sideways (not throwing upwards): the card under the finger pops up instead
+        if (dy > -40 && Math.abs(dx) > 12) {
+          const under = this._pickCard(e);
+          if (under >= 0 && under !== down.card) {
+            clearTimeout(pressTimer);
+            down.card = under; down.x = q.x; down.y = q.y; down.moved = true; down.scrub = true;
+            this.drag = { id: under, dx: 0, dy: 0 };
+            this.hover = under;
+            this._sfx?.('flick');
+            dx = 0; dy = 0;
+          }
+        }
+        if (Math.hypot(dx, dy) > 10) { down.moved = true; clearTimeout(pressTimer); } // moving: not a press-and-hold
         if (this.peekId < 0 && this.drag) {
           const free = this.interactive && this.playable.has(down.card);
           this.drag.dx = free ? dx : dx * 0.15;
@@ -1411,9 +1456,22 @@ export class Arena {
   _pickCard(e) {
     if (!this.handMode || this.hideHand || !this.myCards.size) return -1;
     this._ray(e);
+    // mouse still over the raised (hovered) card where it is now? keep it, so it doesn't flicker
+    const cur = e.pointerType === 'mouse' ? this.myCards.get(this.hover) : null;
+    if (cur?.userData.inHand && this._raycaster.intersectObject(cur.children[0], false).length) return this.hover;
+    // otherwise pick by where the cards sit in the fan (not where they float while raised)
     const fronts = [];
-    for (const m of this.myCards.values()) if (m.userData.inHand) fronts.push(m.children[0]);
+    const saved = [];
+    for (const m of this.myCards.values()) {
+      const h = m.userData.home;
+      if (!m.userData.inHand || !h) continue;
+      saved.push([m, m.position.clone(), m.quaternion.clone(), m.scale.x]);
+      m.position.copy(h.p); m.quaternion.copy(h.q); m.scale.setScalar(h.s);
+      m.updateMatrixWorld(true);
+      fronts.push(m.children[0]);
+    }
     const hit = this._raycaster.intersectObjects(fronts, false)[0];
+    for (const [m, p, q, sc] of saved) { m.position.copy(p); m.quaternion.copy(q); m.scale.setScalar(sc); m.updateMatrixWorld(true); }
     return hit ? hit.object.parent.userData.id : -1;
   }
 
@@ -1459,15 +1517,19 @@ export class Arena {
       this.clouds.position.x = Math.sin(t * 0.02) * 20;
     }
     // hand: home pose + lift + drag + peek
+    const looking = this.peekId >= 0 ? this.peekId : this.hover;
+    if (looking !== this._lastLook) { this._lastLook = looking; this.onHover?.(looking); }
     if (this.myCards.size) {
       const pk = this._peekPose(1);
       const { k } = this._handMetrics();
       for (const [id, m] of this.myCards) {
         const h = m.userData.home;
         if (!m.userData.inHand || !h) continue;
-        const hov = id === this.hover && !this.hideHand;
-        const target = (m.userData.lift || 0) + (hov ? (this.playable.has(id) && this.interactive ? 0.14 : 0.06) : 0);
+        const hov = id === this.hover && !this.hideHand && this.peekId < 0;
+        // hovered card (mouse, or a finger sliding along the hand) rises clear of its neighbours
+        const target = (m.userData.lift || 0) + (hov ? h.s * CH * 0.42 : 0);
         m.userData.liftNow += (target - m.userData.liftNow) * Math.min(1, dt * 14);
+        m.userData.hov = (m.userData.hov || 0) + ((hov ? 1 : 0) - (m.userData.hov || 0)) * Math.min(1, dt * 14);
         const pkT = id === this.peekId ? 1 : 0;
         m.userData.peek += (pkT - m.userData.peek) * Math.min(1, dt * 12);
         const dr = m.userData.drag;
@@ -1478,9 +1540,11 @@ export class Arena {
         dr.y += (ty - dr.y) * kk;
         const up = m.userData.up || Y;
         m.position.copy(h.p).addScaledVector(up, m.userData.liftNow).add(dr);
+        const hv = m.userData.hov;
         if (hov || dragging) m.position.z += 0.08;
-        m.quaternion.copy(h.q);
-        let s = h.s * (hov ? 1.06 : 1);
+        m.position.z += 0.25 * hv; // in front of every other card
+        m.quaternion.copy(h.q).slerp(QI, 0.75 * hv); // stand it up straight
+        let s = h.s * (1 + 0.22 * hv);
         const pv = m.userData.peek;
         if (m.userData.mat && m.userData.dim != null && m.userData.dim < 1) m.userData.mat.color.setScalar(m.userData.dim + (1 - m.userData.dim) * pv);
         if (pv > 0.001) {

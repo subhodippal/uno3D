@@ -1,6 +1,6 @@
 // Service worker: cache-first app shell so the game works offline.
 // Bump VERSION whenever you deploy changes.
-const VERSION = 'colorcard3d-v14';
+const VERSION = 'colorcard3d-v15';
 const ASSETS = [
   './',
   './index.html',

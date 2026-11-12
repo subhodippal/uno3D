@@ -540,3 +540,50 @@ html.rot canvas#c { width: 100%; height: 100%; }
 .game-chip span { font: 700 15px var(--display); color: #c62828; }
 .game-chip span.flip { color: #6a2bc4; }
 .game-chip small { font: 500 11px var(--display); color: var(--muted); }
+
+/* whose turn it is: a bouncing marker over that player's tag */
+.seat-tag .turn-mark {
+  position: absolute; left: 50%; top: -24px; transform: translateX(-50%);
+  font: 700 20px/1 var(--display); color: var(--c); -webkit-text-stroke: 2px #fff; paint-order: stroke fill;
+  animation: turnBob .7s ease-in-out infinite; pointer-events: none; filter: drop-shadow(0 2px 2px rgba(0,0,0,.25));
+}
+@keyframes turnBob { 50% { transform: translate(-50%, -6px); } }
+.seat-tag.on { box-shadow: 0 0 0 3px var(--c), 0 0 18px 4px color-mix(in srgb, var(--c) 55%, transparent), 0 4px 10px rgba(0,0,0,.18) !important; }
+/* and over your own hand when it's you */
+.my-turn {
+  position: absolute; left: 50%; bottom: calc(var(--hand-top) + 4px); transform: translateX(-50%);
+  pointer-events: none !important; z-index: 2;
+}
+.my-turn b {
+  display: block; font: 700 16px var(--display); color: #fff; letter-spacing: 1px; white-space: nowrap;
+  padding: 6px 16px; border-radius: 99px; background: var(--c, #7e57c2); border: 3px solid #fff;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c, #7e57c2) 35%, transparent), 0 6px 14px rgba(0,0,0,.2);
+  animation: turnPulse 1s ease-in-out infinite;
+}
+@keyframes turnPulse { 50% { transform: scale(1.07); box-shadow: 0 0 0 9px color-mix(in srgb, var(--c, #7e57c2) 18%, transparent), 0 6px 14px rgba(0,0,0,.2); } }
+/* 5-8 players: smaller tags */
+#tags.many .seat-tag { transform: translate(-50%, -50%) scale(.82); }
+#tags.many .seat-tag small { display: none; }
+/* reconnecting */
+.net-status {
+  position: fixed; left: 50%; top: calc(112px + var(--safe-t)); transform: translateX(-50%); z-index: 40;
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 99px;
+  background: #fff3c4; color: #5a4300; font: 700 14px var(--display); box-shadow: 0 4px 12px rgba(0,0,0,.18); pointer-events: none;
+}
+.net-status i { width: 14px; height: 14px; border-radius: 50%; border: 3px solid #e3a400; border-top-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#pickPlayers { flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { .seat-tag .turn-mark, .my-turn b, .net-status i { animation: none; } }
+#tags.many .seat-tag.on { transform: translate(-50%, -50%) scale(.92); }
+
+.my-turn { transition: opacity .2s; }
+.my-turn.dim { opacity: 0; }
+/* phones: keep the whole top bar on screen (the room code is also in the pause menu) */
+@media (max-width: 430px) {
+  .topbar { gap: 6px; padding-left: calc(8px + var(--safe-l)); padding-right: calc(8px + var(--safe-r)); }
+  .topbar .icon-btn { width: 40px; height: 40px; border-radius: 12px; }
+  .topbar .view-chip { min-width: 40px; padding: 0 7px; }
+  .topbar-right { gap: 6px; }
+  #roomTag { display: none !important; }
+}
+@media (max-width: 360px) { .color-tag .ct small { display: none; } }

@@ -8,11 +8,19 @@ It's built with [three.js](https://threejs.org/) and is a static site with no bu
 Three ways to play, straight from the menu:
 
 - **Single play:** you against 1–3 bots (Easy / Normal / Hard). Name yourself and the bots on the setup screen.
-- **Group:** create a private room and share the 5-letter code or link, or join a friend's room with their code.
+- **Group:** create a private room for **2 to 8 players** and share the 5-letter code or link, or join a friend's room with their code.
 - **Online:** pick a table size (2, 3 or 4) and tap **Find players**. Everyone searching for the same table size is grouped into one room. The game starts by itself 3 seconds after the table fills, or 30 seconds after a second player joins (bots take the empty seats). The first player at a table can also tap **Play now** at any time.
 
-Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards, and if someone drops out a bot takes over.
+Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards.
 
+**Staying connected:**
+- **Reload or refresh** and you're put straight back into your room and your seat, for both the host and the guests. The host's room reopens under the same code, and guests reconnect by themselves.
+- **Weak signal:** a heartbeat notices a dead connection, and the game keeps trying to reconnect for 2 minutes.
+- **While someone is away**, their seat shows "Reconnecting…". On their turn the game waits 15 seconds, then a bot plays that one turn for them. After 3 minutes a bot takes the seat, but they still get it back if they return.
+- **Leaving from the menu** tells the others straight away: a guest's seat goes to a bot, and if the host leaves the room closes.
+- Your **name** is remembered on this device.
+
+- **Whose turn:** a bouncing ▼ marker and a glow on the player whose turn it is, and a pulsing **YOUR TURN** above your hand.
 - **Two games:** **Color Card** (classic) and **Color Card Flip** (double-sided cards with a light and a dark side, see below). Switch between them with the tabs at the top of the main menu; the choice is used for Single play, Group rooms and Online quick match (Flip players are only matched with Flip players).
 - **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking draw cards, draw until playable, must call “Last card!”).
 - **Special cards after a shuffle** (Settings → Low / Medium / High): how likely Skip, Reverse, Pick 2/4, colour cards (and in Flip: Flip, Pick 1/5, Skip Everyone, Draw Colour) are to come up. Low is a normal shuffle (about 30% special cards in a classic hand), Medium makes them 2.5× as likely (about 50%), High 5× (about 65%).
@@ -22,7 +30,7 @@ Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Ev
 - **Male voice call-outs** (recorded clips, so every phone sounds the same): “Last card!”, “Skipped!”, “Reverse!”, “Pick two!”, “Pick four!”, “Color card!” plus the chosen colour (“Red!”, “Green!”, “Yellow!”, “Blue!”), “Draw card!”, “Pass.”, “Your turn!”, “You win!” / “Winner!”. Action cards also flash big text.
 - **Music:** a light looping tune made with Web Audio. Sound effects, voice and music each have their own switch in Settings; the speaker button in the game mutes everything.
 - **Your hand is held like real cards:** a curved fan along the bottom of the screen. Cards you can play are raised; the rest are dimmed.
-- **Throw a card by tapping it or swiping it up.** Press and hold a card to look at it up close, and tap the discard pile to see its top card. Cards you draw pop up in front of you so you can see them before they go into your hand.
+- **Throw a card by tapping it or swiping it up.** Slide a finger along your hand (or hover with the mouse) and the card under it rises out of the fan so you can see all of it. Press and hold a card to look at it up close (keep holding and slide to flip through your hand at full size), and tap the discard pile to see its top card. Cards you draw pop up in front of you so you can see them before they go into your hand.
 - **Celebrations:** firecracker volleys with booms, 3D fireworks and confetti for wins, screen-shake punches for action cards, and sounds for throwing, landing, drawing and flipping cards. Sound effects are generated with Web Audio. Phones also vibrate on some events.
 - **PWA:** installable and works offline (except online play). Local games auto-save and can be continued.
 

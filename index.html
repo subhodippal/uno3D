@@ -21,6 +21,7 @@
   <canvas id="c" aria-label="Card table"></canvas>
   <div id="bg" aria-hidden="true"><canvas id="bgfx"></canvas><i class="beams"></i><i class="flash"></i></div>
   <div id="tags" aria-live="polite"></div>
+  <div id="netStatus" class="net-status hidden" role="status"><i></i><span>Reconnecting…</span></div>
 
   <!-- In-game HUD -->
   <div id="hud" class="hidden">
@@ -53,6 +54,7 @@
       <button id="btnPickCancel" class="btn btn-ghost small">Cancel</button>
     </div>
     <div class="statusbar"><div id="status" class="status"></div></div>
+    <div id="myTurn" class="my-turn hidden" aria-live="polite"><b>▼ YOUR TURN ▼</b></div>
     <div class="actions">
       <button id="btnLast" class="btn act last hidden"><span class="last-ico">☝</span>UNO!</button>
       <button id="btnDraw" class="btn act draw hidden">Draw</button>
@@ -101,7 +103,7 @@
       <h2 id="setupTitle">New game</h2>
       <div class="game-chip" id="setupGame"></div>
       <div class="optlbl">Players</div>
-      <div class="seg" id="pickPlayers"><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button></div>
+      <div class="seg" id="pickPlayers"><button data-v="2">2</button><button data-v="3">3</button><button data-v="4">4</button><button data-v="5" class="room-only">5</button><button data-v="6" class="room-only">6</button><button data-v="7" class="room-only">7</button><button data-v="8" class="room-only">8</button></div>
       <div id="seatRows" class="seat-rows"></div>
       <div class="optlbl">Cards in hand</div>
       <div class="seg" id="pickHand"><button data-v="5">5</button><button data-v="7">7</button><button data-v="10">10</button></div>

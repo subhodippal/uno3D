@@ -34,15 +34,27 @@ function friendlyError(err) {
   return err?.message || 'Connection error';
 }
 
+// Connections are kept alive with a heartbeat: the host pings every few seconds and the guest
+// answers. A link that stays silent for a long time is treated as dropped (slow links are fine:
+// any message counts, and the limit is generous), so a lost phone signal is noticed quickly and
+// the guest can reconnect, instead of hanging forever.
+const PING_MS = 4000;
+const HOST_SILENCE_MS = 25000;
+const GUEST_SILENCE_MS = 20000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export class HostNet {
-  constructor() { this.conns = new Map(); this.handlers = {}; }
+  constructor() { this.conns = new Map(); this.seen = new Map(); this.handlers = {}; }
   on(ev, fn) { this.handlers[ev] = fn; return this; }
   _emit(ev, ...a) { this.handlers[ev]?.(...a); }
 
-  async start() {
+  // fixed = reopen this room code (after the host reloaded); the old registration can take a
+  // little while to expire on the broker, so keep trying for a bit
+  async start(fixed = null) {
     await loadPeer();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const code = makeCode();
+    const tries = fixed ? 25 : 3;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      const code = fixed || makeCode();
       try {
         await new Promise((res, rej) => {
           const peer = new window.Peer(PREFIX + code, { debug: 0 });
@@ -53,35 +65,60 @@ export class HostNet {
             else if (e.type !== 'peer-unavailable') this._emit('error', friendlyError(e));
           });
           peer.on('connection', (conn) => this._accept(conn));
-          peer.on('disconnected', () => { if (!peer.destroyed) peer.reconnect(); });
+          peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => { if (!peer.destroyed && peer.disconnected) peer.reconnect(); }, 1000); });
         });
         this.code = code;
+        this._beat = setInterval(() => this._heartbeat(), PING_MS);
         return code;
       } catch (e) {
         this.peer?.destroy();
         if (e.type !== 'unavailable-id') throw new Error(friendlyError(e));
+        if (fixed) await sleep(2000);
       }
     }
-    throw new Error('Could not create room');
+    throw new Error(fixed ? 'Could not reopen the room. Try again in a minute.' : 'Could not create room');
+  }
+
+  _heartbeat() {
+    const now = Date.now();
+    for (const [id, c] of this.conns) {
+      if (now - (this.seen.get(id) || now) > HOST_SILENCE_MS) { this._drop(id, c); continue; }
+      if (c.open) try { c.send({ t: 'ping' }); } catch { /* ignore */ }
+    }
+  }
+
+  _drop(id, c) {
+    if (!this.conns.has(id) || this.conns.get(id) !== c) return;
+    this.conns.delete(id);
+    this.seen.delete(id);
+    try { c.close(); } catch { /* ignore */ }
+    this._emit('leave', id);
   }
 
   _accept(conn) {
     conn.on('open', () => {
+      const old = this.conns.get(conn.peer);
+      if (old && old !== conn) try { old.close(); } catch { /* ignore */ }
       this.conns.set(conn.peer, conn);
-      conn.on('data', (msg) => this._emit('message', conn.peer, msg));
-      conn.on('close', () => { this.conns.delete(conn.peer); this._emit('leave', conn.peer); });
+      this.seen.set(conn.peer, Date.now());
+      conn.on('data', (msg) => {
+        this.seen.set(conn.peer, Date.now());
+        if (msg && msg.t === 'pong') return;
+        this._emit('message', conn.peer, msg);
+      });
+      conn.on('close', () => this._drop(conn.peer, conn));
       conn.on('error', () => {});
     });
   }
 
-  send(id, msg) { const c = this.conns.get(id); if (c?.open) c.send(msg); }
-  broadcast(msg) { for (const c of this.conns.values()) if (c.open) c.send(msg); }
-  kick(id) { this.conns.get(id)?.close(); this.conns.delete(id); }
-  close() { for (const c of this.conns.values()) c.close(); this.peer?.destroy(); this.conns.clear(); }
+  send(id, msg) { const c = this.conns.get(id); if (c?.open) try { c.send(msg); } catch { /* ignore */ } }
+  broadcast(msg) { for (const c of this.conns.values()) if (c.open) try { c.send(msg); } catch { /* ignore */ } }
+  kick(id) { const c = this.conns.get(id); this.conns.delete(id); this.seen.delete(id); try { c?.close(); } catch { /* ignore */ } }
+  close() { clearInterval(this._beat); for (const c of this.conns.values()) try { c.close(); } catch { /* ignore */ } this.peer?.destroy(); this.conns.clear(); }
 }
 
 export class ClientNet {
-  constructor() { this.handlers = {}; }
+  constructor() { this.handlers = {}; this.closed = false; }
   on(ev, fn) { this.handlers[ev] = fn; return this; }
   _emit(ev, ...a) { this.handlers[ev]?.(...a); }
 
@@ -93,21 +130,37 @@ export class ClientNet {
       this.peer = peer;
       let opened = false;
       const timer = setTimeout(() => { if (!opened) rej(new Error('Timed out connecting to room.')); }, 15000);
-      peer.on('error', (e) => { if (!opened) { clearTimeout(timer); rej(new Error(friendlyError(e))); } else this._emit('error', friendlyError(e)); });
+      peer.on('error', (e) => { if (!opened) { clearTimeout(timer); rej(new Error(friendlyError(e))); } else if (e.type !== 'peer-unavailable') this._emit('error', friendlyError(e)); });
+      peer.on('disconnected', () => { if (!peer.destroyed) setTimeout(() => { if (!peer.destroyed && peer.disconnected) peer.reconnect(); }, 1000); });
       peer.on('open', () => {
         const conn = peer.connect(PREFIX + code, { reliable: true });
         this.conn = conn;
-        conn.on('open', () => { opened = true; clearTimeout(timer); res(); });
-        conn.on('data', (msg) => this._emit('message', msg));
-        conn.on('close', () => this._emit('close'));
+        conn.on('open', () => { opened = true; clearTimeout(timer); this.seen = Date.now(); res(); });
+        conn.on('data', (msg) => {
+          this.seen = Date.now();
+          if (msg && msg.t === 'ping') { this.send({ t: 'pong' }); return; }
+          this._emit('message', msg);
+        });
+        conn.on('close', () => this._lost());
         conn.on('error', () => {});
       });
     });
     this.code = code;
+    this._beat = setInterval(() => { if (Date.now() - this.seen > GUEST_SILENCE_MS) this._lost(); }, 2000);
   }
 
-  send(msg) { if (this.conn?.open) this.conn.send(msg); }
-  close() { this.conn?.close(); this.peer?.destroy(); }
+  // the link is gone (closed, or silent for too long): report it once
+  _lost() {
+    if (this.closed) return;
+    this.closed = true;
+    clearInterval(this._beat);
+    try { this.conn?.close(); } catch { /* ignore */ }
+    try { this.peer?.destroy(); } catch { /* ignore */ }
+    this._emit('close');
+  }
+
+  send(msg) { if (this.conn?.open) try { this.conn.send(msg); } catch { /* ignore */ } }
+  close() { this.closed = true; clearInterval(this._beat); try { this.conn?.close(); } catch { /* ignore */ } this.peer?.destroy(); }
 }
 
 // ---------------------------------------------------------------- matchmaking
