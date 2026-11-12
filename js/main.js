@@ -8,6 +8,7 @@ import * as bg from './bgfx.js';
 import { HostNet, ClientNet, findMatch, findLowerTable } from './net.js';
 import { flushTweens } from './anim.js';
 import { view } from './view.js';
+import { LanHost, LanClient, drawQR, startScanner } from './lan.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -33,9 +34,11 @@ const store = {
 
 const CID = store.get(CID_KEY) || (() => { const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join(''); store.set(CID_KEY, id); return id; })();
 const savedName = () => store.get(NAME_KEY) || '';
+const coarse = matchMedia('(pointer: coarse)').matches;
 const lowEnd = (navigator.hardwareConcurrency || 4) <= 2;
 const settings = Object.assign({ special: 'medium', view: '3d', orient: 'auto', sound: true, voice: true, music: true, muted: false, vibrate: true, quality: lowEnd ? 'low' : 'high', speed: 'normal' }, store.get(SET_KEY) || {});
 // the HUD speaker button mutes everything; the settings screen switches each part
+if (!settings.orientSet) settings.orient = coarse ? 'portrait' : 'auto';
 function applyAudio() {
   sfx.enabled = settings.sound && !settings.muted;
   sfx.voiceOn = settings.voice && !settings.muted;
@@ -90,19 +93,16 @@ async function lockOrientation() {
   }
 }
 updateRot();
-window.addEventListener('pointerdown', () => { if (settings.orient !== 'auto') lockOrientation(); }, { once: true });
+// a mode picked in Settings: lock it for real on the first tap (Android). The default portrait
+// needs no fullscreen: the page simply stays upright.
+window.addEventListener('pointerdown', () => { if (settings.orientSet && settings.orient !== 'auto') lockOrientation(); }, { once: true });
 
 const arena = new Arena($('#c'), { quality: settings.quality });
 arena.setFlat(settings.view === '2d');
+bg.setEnabled(settings.view !== '2d');
 
 function syncViewChips() {
-  $$('[data-act="view"] .vlbl').forEach((b) => { b.textContent = settings.view === '2d' ? '2D' : '3D'; });
-  $$('[data-act="orient"]').forEach((b) => {
-    const land = view.w > view.h;
-    b.classList.toggle('land', land);
-    b.querySelector('.olbl').textContent = land ? 'Landscape' : 'Portrait';
-    b.setAttribute('aria-label', land ? 'Switch to portrait' : 'Switch to landscape');
-  });
+  $$('[data-act="view"]').forEach((b) => { b.classList.toggle('is2d', settings.view === '2d'); b.setAttribute('aria-checked', settings.view === '2d'); });
   $$('#segView button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.view));
   $$('#segOrient button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.orient));
 }
@@ -110,10 +110,13 @@ function setView(v) {
   settings.view = v;
   store.set(SET_KEY, settings);
   arena.setFlat(v === '2d');
+  bg.setEnabled(v !== '2d'); // 2D is the battery saver: no background fireworks
   syncViewChips();
+  toast(v === '2d' ? '2D · battery saver: fewer effects, no shadows' : '3D view', 1500);
 }
 function setOrient(o) {
   settings.orient = o;
+  settings.orientSet = true;
   store.set(SET_KEY, settings);
   // try the real lock first; the CSS turn only kicks in if the phone refuses
   lockOrientation().then(syncViewChips);
@@ -142,7 +145,7 @@ function measureBottom() {
 window.addEventListener('resize', () => { measureBottom(); placeTags(); });
 
 // ---------------------------------------------------------------- screens
-const SCREENS = ['scrMenu', 'scrSetup', 'scrOnline', 'scrSearch', 'scrLobby', 'scrPass', 'scrRound', 'scrPause', 'scrSettings', 'scrHelp', 'scrMsg'];
+const SCREENS = ['scrLan', 'scrMenu', 'scrSetup', 'scrOnline', 'scrSearch', 'scrLobby', 'scrPass', 'scrRound', 'scrPause', 'scrSettings', 'scrHelp', 'scrMsg'];
 let current = 'scrMenu';
 let overlayBack = null;
 function show(id) {
@@ -184,8 +187,8 @@ function defaultName(s, kind, kinds) {
 function openSetup(mode) {
   setup.mode = mode;
   if (mode === 'cpu') setup.kinds = ['human', 'cpu', 'cpu', 'cpu'];
-  $('#setupTitle').textContent = mode === 'host' ? 'Room settings' : 'Single play';
-  $('#btnStart').textContent = mode === 'host' ? 'Create room' : 'Start game';
+  $('#setupTitle').textContent = mode === 'host' ? 'Room settings' : mode === 'lan' ? 'Nearby game' : 'Single play';
+  $('#btnStart').textContent = mode === 'host' ? 'Create room' : mode === 'lan' ? 'Create nearby game' : 'Start game';
   $('#setupErr').textContent = '';
   renderSetup();
   show('scrSetup');
@@ -194,8 +197,9 @@ function openSetup(mode) {
 // game config from the setup screen (setup.mode is the screen mode: 'cpu' or 'host')
 function setupCfg() { return R.normalizeCfg({ ...setup, mode: setup.variant, special: settings.special }); }
 function renderSetup() {
-  if (setup.mode !== 'host' && setup.np > 4) setup.np = 4;
-  $$('#pickPlayers .room-only').forEach((b) => b.classList.toggle('hidden', setup.mode !== 'host'));
+  const room = setup.mode === 'host' || setup.mode === 'lan';
+  if (!room && setup.np > 4) setup.np = 4;
+  $$('#pickPlayers .room-only').forEach((b) => b.classList.toggle('hidden', !room));
   const { mode: variant, special, ...c } = setupCfg();
   Object.assign(setup, c);
   setup.variant = variant;
@@ -205,7 +209,7 @@ function renderSetup() {
   $('#optStack').checked = setup.stack;
   $('#optUntil').checked = setup.drawMode === 'until';
   $('#optCall').checked = setup.callRule;
-  const local = setup.mode !== 'host';
+  const local = !room;
   $('#seatRows').classList.toggle('hidden', !local);
   if (local) {
     const kinds = setup.kinds.slice(0, setup.np);
@@ -217,9 +221,9 @@ function renderSetup() {
         <span class="role">${k === 'human' ? 'You' : '🤖 Bot'}</span></div>`;
     }).join('');
   }
-  const anyCpu = setup.mode === 'host' || setup.kinds.slice(0, setup.np).includes('cpu');
+  const anyCpu = room || setup.kinds.slice(0, setup.np).includes('cpu');
   $('#levelBox').classList.toggle('hidden', !anyCpu);
-  $('#levelBox .optlbl').textContent = setup.mode === 'host' ? 'Bot skill (empty seats)' : 'Bot skill';
+  $('#levelBox .optlbl').textContent = room ? 'Bot skill (empty seats)' : 'Bot skill';
   $$('#segLevel button').forEach((b) => b.classList.toggle('on', b.dataset.v === setup.level));
 }
 
@@ -256,6 +260,7 @@ $('#btnStart').addEventListener('click', () => {
   sfx.unlock(); sfx.click();
   saveSetup();
   if (setup.mode === 'host') return hostCreate();
+  if (setup.mode === 'lan') return lanCreate();
   const cfg = setupCfg();
   const kinds = setup.kinds.slice(0, cfg.np);
   const seats = kinds.map((k, s) => ({ name: (k === 'human' && (setup.names[s] || savedName())) || defaultName(s, k, kinds), kind: k }));
@@ -336,7 +341,7 @@ function persist() {
 
 // online: remember the room so a reload (or a dropped connection) gets you back in
 function saveRoom() {
-  if (!S || S.mode === 'local' || !S.code) return;
+  if (!S || S.mode === 'local' || !S.code || S.lan) return;
   if (S.mode === 'guest') { store.set(ROOM_KEY, { role: 'guest', code: S.code, at: Date.now() }); return; }
   if (S.mm && !S.started) return; // a quick-match table that hasn't started isn't worth reopening
   store.set(ROOM_KEY, {
@@ -960,6 +965,7 @@ function openPause() {
     <div class="info"><b>${esc(seat.name)}</b><span class="sub">${V.counts[s]} cards${seat.kind === 'cpu' ? ' · Bot' : ''}</span></div><span class="pts">${V.scores[s]}</span></div>`).join('') : '';
   $('#btnRestart').classList.toggle('hidden', S.mode === 'guest');
   $('#btnQuit').textContent = S.mode === 'local' ? 'Quit to menu' : 'Leave game';
+  $('#btnPauseLan').classList.toggle('hidden', !(S.lan && S.mode === 'host'));
   show('scrPause');
 }
 function resume() {
@@ -1010,6 +1016,7 @@ function goMenu() {
   reconnTok++;
   setNetStatus(null);
   clearRoom();
+  lanScan?.stop(); lanScan = null;
   if (S?.net) {
     // tell the others this is on purpose, so nobody waits for us to come back
     const net = S.net;
@@ -1044,6 +1051,7 @@ function refreshMenu() {
 $('#btnVsCpu').addEventListener('click', () => { sfx.unlock(); sfx.click(); openSetup('cpu'); });
 $('#btnGroup').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline('', 'group'); });
 $('#btnOnline').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline('', 'online'); });
+$('#btnNearby').addEventListener('click', () => { sfx.unlock(); sfx.click(); openOnline('', 'nearby'); });
 $('#btnContinue').addEventListener('click', () => {
   sfx.unlock(); sfx.click();
   const sv = store.get(SAVE_KEY);
@@ -1156,7 +1164,7 @@ let onlineView = 'online';
 function openOnline(code = '', view = code ? 'group' : onlineView) {
   onlineView = view;
   $('#scrOnline').dataset.view = view;
-  $('#onlineTitle').textContent = view === 'group' ? 'Group play' : 'Online match';
+  $('#onlineTitle').textContent = view === 'group' ? 'Group play' : view === 'nearby' ? '📶 Wi-Fi / Hotspot' : 'Online match';
   $('#inpName').value = store.get(NAME_KEY) || '';
   $('#inpCode').value = code;
   $('#onlineMsg').textContent = '';
@@ -1188,9 +1196,11 @@ $('#btnLobbyLeave').addEventListener('click', () => { sfx.click(); goMenu(); });
 function renderLobby() {
   if (!S) return;
   const mm = !!S.mm;
-  $('#lobbyTitle').textContent = mm ? '⚡ Quick match' : 'Room';
-  $('#lobbyCodeBox').classList.toggle('hidden', mm);
-  $('#lobbyShareRow').classList.toggle('hidden', mm);
+  const lan = !!S.lan;
+  $('#lobbyTitle').textContent = mm ? '⚡ Quick match' : lan ? '📶 Nearby game' : 'Room';
+  $('#lobbyCodeBox').classList.toggle('hidden', mm || lan);
+  $('#lobbyShareRow').classList.toggle('hidden', mm || lan);
+  $('#btnLanAdd').classList.toggle('hidden', !(lan && S.mode === 'host' && S.seats.some((x) => x.kind === 'open')));
   $('#lobbyCode').textContent = S.code;
   $('#lobbyRule').textContent = `${R.describe(S.cfg)} · ${S.cfg.np} players`;
   $('#lobbySeats').innerHTML = S.seats.map((s, i) => {
@@ -1203,6 +1213,12 @@ function renderLobby() {
   $('#btnLobbyStart').classList.toggle('hidden', !isHost);
   $('#btnLobbyStart').textContent = mm ? 'Play now · bots fill empty seats' : 'Start game';
   if (mm) { $('#lobbyNote').textContent = S.mmNote || (isHost ? 'Waiting for players…' : 'Waiting for the game to start…'); return; }
+  if (lan) {
+    $('#lobbyNote').textContent = isHost
+      ? (empty ? 'Tap “Add a player” for each friend. Their phone must be on the same Wi-Fi or your hotspot. Empty seats get bots.' : 'Everyone is here!')
+      : 'Waiting for the host to start…';
+    return;
+  }
   $('#lobbyNote').textContent = isHost
     ? (empty ? `Share the code. ${empty === 1 ? 'An empty seat' : 'Empty seats'} will be played by the computer.` : 'Everyone is here!')
     : 'Waiting for the host to start…';
@@ -1512,6 +1528,7 @@ function wireGuest(net) {
     if (!S || S.net !== net) return;
     const mm = S.mm && !S.started ? S.mm : null;
     if (mm) { S = null; clearRoom(); toast('The host left. Searching again…', 2200); quickMatch(mm.np); return; }
+    if (S.lan) { roomClosed('Lost the connection to the host. To get back in, tap Wi-Fi / Hotspot → Join a game and ask the host to re-add you (you keep your seat).'); return; }
     // dropped (bad signal, or the host is reloading): keep trying to get back in
     S.reconnecting = true;
     arena.setInteractive(false);
@@ -1521,6 +1538,126 @@ function wireGuest(net) {
     if (!ok && S && S.code === code && S.reconnecting) roomClosed('Lost the connection to the room.');
   });
   net.on('error', (m) => toast(m, 3000));
+}
+
+// ---------------------------------------------------------------- nearby (Wi-Fi / hotspot, no internet)
+// One screen (#scrLan) walks through the QR exchange. lanStep() shows one step and resolves with
+// the next action: 'main' / 'alt' (the buttons), 'cancel', or a scanned / typed code.
+let lanScan = null;
+let lanStepResolve = null;
+let lanBack = 'scrOnline';
+function lanStep({ title, text, qr = null, scan = false, typing = false, main = null, alt = null }) {
+  lanScan?.stop(); lanScan = null;
+  $('#lanTitle').textContent = title;
+  $('#lanText').textContent = text;
+  $('#lanErr').textContent = '';
+  $('#lanQr').classList.toggle('hidden', !qr);
+  if (qr) drawQR($('#lanQr'), qr);
+  $('#lanCode').classList.toggle('hidden', !typing && !qr);
+  $('#lanCode').readOnly = !!qr;
+  $('#lanCode').value = qr || '';
+  $('#lanCam').classList.toggle('hidden', !scan || typing);
+  $('#lanMain').classList.toggle('hidden', !main);
+  $('#lanMain').textContent = main || '';
+  $('#lanAlt').classList.toggle('hidden', !alt);
+  $('#lanAlt').textContent = alt || '';
+  show('scrLan');
+  return new Promise((resolve) => {
+    lanStepResolve = resolve;
+    if (scan && !typing) {
+      lanScan = startScanner($('#lanVideo'));
+      lanScan.result.then((code) => { if (code && lanStepResolve === resolve) { sfx.pop(); resolve(code); } })
+        .catch((e) => { if (lanStepResolve === resolve) $('#lanErr').textContent = (e && e.name === 'NotAllowedError' ? 'Camera blocked. ' : '') + 'Can’t use the camera here. Tap “Type the code”.'; });
+    }
+  });
+}
+$('#lanMain').addEventListener('click', () => {
+  sfx.click();
+  if (!$('#lanCode').readOnly && !$('#lanCode').classList.contains('hidden')) { lanStepResolve?.($('#lanCode').value.trim()); return; }
+  lanStepResolve?.('main');
+});
+$('#lanAlt').addEventListener('click', () => { sfx.click(); lanStepResolve?.('alt'); });
+$('#lanCancel').addEventListener('click', () => { sfx.click(); lanScan?.stop(); lanScan = null; lanStepResolve?.('cancel'); });
+$('#lanCode').addEventListener('focus', () => { if ($('#lanCode').readOnly) $('#lanCode').select(); });
+
+// scan a code with the camera, or type / paste it. Resolves with the code or null (cancelled).
+async function lanGetCode(title, text) {
+  let typing = false;
+  for (;;) {
+    const r = await lanStep({ title, text, scan: true, typing, main: typing ? 'Use this code' : null, alt: typing ? 'Use the camera' : 'Type the code' });
+    if (r === 'cancel') return null;
+    if (r === 'alt') { typing = !typing; continue; }
+    if (r && r !== 'main') return r;
+  }
+}
+
+$('#btnLanHost').addEventListener('click', () => { sfx.unlock(); sfx.click(); myName(); openSetup('lan'); });
+$('#btnLanJoin').addEventListener('click', () => { sfx.unlock(); sfx.click(); myName(); lanJoin(); });
+$('#btnLanAdd').addEventListener('click', () => { sfx.click(); lanAddPlayer('scrLobby'); });
+$('#btnPauseLan').addEventListener('click', () => { sfx.click(); lanAddPlayer('scrPause'); });
+
+function lanCreate() {
+  const net = new LanHost();
+  net.start();
+  const cfg = setupCfg();
+  const seats = Array.from({ length: cfg.np }, (_, i) => (i === 0 ? { name: savedName() || 'Host', kind: 'human', host: true } : { name: '', kind: 'open' }));
+  S = { mode: 'host', net, code: net.code, lan: true, cfg, seats, level: setup.level, mySeat: 0, started: false, G: null };
+  wireHost(net);
+  renderLobby();
+  show('scrLobby');
+}
+
+// host: one QR exchange per friend
+async function lanAddPlayer(back) {
+  if (!S?.lan || S.mode !== 'host') return;
+  const net = S.net;
+  let inv;
+  lanStep({ title: 'Add a player', text: 'Making a code…' });
+  try { inv = await net.invite(); } catch (e) { lanStep({ title: 'Add a player', text: e.message || 'Could not make a code.', main: 'OK' }).then(() => show(back)); return; }
+  for (;;) {
+    const r = await lanStep({
+      title: 'Add a player · step 1 of 2',
+      text: 'On your friend’s phone: Wi-Fi / Hotspot → “Join a game”, then let them scan this code.',
+      qr: inv.code, main: 'Next: scan their code',
+    });
+    if (r === 'cancel') { inv.cancel(); show(back); return; }
+    const reply = await lanGetCode('Add a player · step 2 of 2', 'Now scan the code on your friend’s screen.');
+    if (!reply) continue; // back to the first code
+    lanStep({ title: 'Connecting…', text: 'Linking the two phones over Wi-Fi.' });
+    try {
+      await inv.accept(reply);
+      toast('Connected!', 1400);
+      if (S?.started && back === 'scrPause') resume(); else show(back);
+      return;
+    } catch (e) {
+      const again = await lanStep({ title: 'Couldn’t connect', text: e.message || 'Try again.', main: 'Try again' });
+      if (again === 'cancel') { inv.cancel(); show(back); return; }
+    }
+  }
+}
+
+// guest: scan the host's code, show ours, wait for the link
+async function lanJoin() {
+  const offer = await lanGetCode('Join a game · step 1 of 2', 'On the host’s phone: “Add a player”. Scan the code it shows.');
+  if (!offer) { openOnline('', 'nearby'); return; }
+  const net = new LanClient();
+  let reply;
+  try { reply = await net.answer(offer); } catch (e) {
+    await lanStep({ title: 'That didn’t work', text: e.message || 'Try again.', main: 'OK' });
+    net.close(); openOnline('', 'nearby'); return;
+  }
+  const waiting = lanStep({ title: 'Join a game · step 2 of 2', text: 'Show this code to the host to scan. Keep this screen open…', qr: reply });
+  const r = await Promise.race([net.connected.then(() => 'ok', (e) => e), waiting]);
+  if (r !== 'ok') {
+    net.close();
+    if (r instanceof Error) await lanStep({ title: 'Couldn’t connect', text: r.message, main: 'OK' });
+    openOnline('', 'nearby');
+    return;
+  }
+  S = { mode: 'guest', net, code: net.code, lan: true, cfg: null, seats: [], mySeat: -1, V: null };
+  wireGuest(net);
+  net.send({ t: 'hello', name: savedName() || 'Player', cid: CID });
+  lanStep({ title: 'Connected!', text: 'Waiting for the host…' });
 }
 
 // ---------------------------------------------------------------- quick match

@@ -9,6 +9,7 @@ Three ways to play, straight from the menu:
 
 - **Single play:** you against 1–3 bots (Easy / Normal / Hard). Name yourself and the bots on the setup screen.
 - **Group:** create a private room for **2 to 8 players** and share the 5-letter code or link, or join a friend's room with their code.
+- **Wi-Fi / Hotspot (no internet needed):** its own button on the main menu → **Host a game** or **Join a game**. The phones connect directly over the same Wi-Fi or one phone's hotspot. Instead of a server, they swap two QR codes per friend: the host's phone shows a code, the friend scans it and shows a reply code, and the host scans that. If a camera isn't available, you can type or paste the codes instead. Up to 8 players. If someone drops out, the host can re-add them from the pause menu and they keep their seat. For this to work without internet, open the game once while online so it's saved for offline use.
 - **Online:** pick a table size (2, 3 or 4) and tap **Find players**. Everyone searching for the same table size is grouped into one room. The game starts by itself 3 seconds after the table fills, or 30 seconds after a second player joins (bots take the empty seats). The first player at a table can also tap **Play now** at any time.
 
 Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Every player only receives their own cards.
@@ -25,7 +26,11 @@ Group and Online use WebRTC (PeerJS), so you don't need a server of your own. Ev
 - **Setup options:** 2/3/4 players, 5/7/10 starting cards, match to 100/250/500 points or free play, and house rules (stacking draw cards, draw until playable, must call “Last card!”).
 - **Special cards after a shuffle** (Settings → Low / Medium / High): how likely Skip, Reverse, Pick 2/4, colour cards (and in Flip: Flip, Pick 1/5, Skip Everyone, Draw Colour) are to come up. Low is a normal shuffle (about 30% special cards in a classic hand), Medium makes them 2.5× as likely (about 50%), High 5× (about 65%).
 - **3D meadow:** lime grass, low-poly trees, bushes and flowers, and soft sun shadows under the cards.
-- **2D / 3D and Portrait / Landscape:** buttons at the top of the menu and the game (also in Settings). 2D looks straight down on the table. On phones you can force portrait or landscape: Android goes fullscreen and locks the rotation; on iPhone (which can't lock it) the game turns itself sideways.
+- **3D / 2D toggle** (cube / flat icons at the top of the menu and the game, also in Settings). 2D looks straight down on the table and is a **battery saver**:
+  - no shadows, trees or grass, and no background fireworks
+  - quicker, plainer card moves
+  - 30 fps at normal resolution
+- **Portrait / Landscape** is in **Settings** (on phones only), and phones start in **portrait**. If you pick a mode: Android goes fullscreen and locks the rotation, while iPhone, which can't lock it, turns the game sideways inside the page.
 - **Direction circle:** a white energy ring around the piles with lightning streaks racing clockwise or anticlockwise in the current colour (they turn red when someone picks red on a wild). A Reverse flashes the ring, throws sparks off it and whips the lightning round the other way. The badge at the top shows the colour and the direction too.
 - **Male voice call-outs** (recorded clips, so every phone sounds the same): “Last card!”, “Skipped!”, “Reverse!”, “Pick two!”, “Pick four!”, “Color card!” plus the chosen colour (“Red!”, “Green!”, “Yellow!”, “Blue!”), “Draw card!”, “Pass.”, “Your turn!”, “You win!” / “Winner!”. Action cards also flash big text.
 - **Music:** a light looping tune made with Web Audio. Sound effects, voice and music each have their own switch in Settings; the speaker button in the game mutes everything.
@@ -93,7 +98,8 @@ js/net.js             PeerJS host/client wrappers
 js/view.js            Screen size / pointer helper for the forced-orientation mode
 js/bgfx.js, fx3d.js   Background fireworks and 3D particle effects
 js/anim.js            Tween helper
-vendor/               three.js, PeerJS (MIT)
+vendor/               three.js, PeerJS, qrcode-generator (MIT), jsQR (Apache-2.0)
+js/lan.js             Nearby play: direct WebRTC with QR-code invitations, QR drawing and scanning
 fonts/                Fredoka (SIL Open Font License)
 audio/voice/          Voice clips (Piper TTS, en_US “john” voice, trained on public-domain LibriVox audio)
 sw.js, manifest.webmanifest, icons/   PWA

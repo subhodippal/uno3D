@@ -32,8 +32,9 @@
       <div id="roomTag" class="room-tag hidden"></div>
       <div id="colorTag" class="color-tag"></div>
       <div class="topbar-right">
-        <button class="icon-btn view-chip" data-act="view" aria-label="Switch 2D / 3D view"><b class="vlbl">3D</b></button>
-        <button class="icon-btn view-chip touch-only" data-act="orient" aria-label="Portrait / landscape"><svg viewBox="0 0 24 24" class="oico"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg><b class="olbl">Portrait</b></button>
+        <button class="view-toggle" data-act="view" role="switch" aria-checked="false" aria-label="2D view (saves battery)" title="3D / 2D view">
+          <i class="o3d"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></i><i class="o2d"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/></svg></i>
+        </button>
         <button id="btnEmoji" class="icon-btn hidden" aria-label="Send emoji">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/></svg>
         </button>
@@ -64,8 +65,9 @@
   <!-- Menu -->
   <section id="scrMenu" class="screen">
     <div class="menu-view">
-        <button class="icon-btn view-chip" data-act="view" aria-label="Switch 2D / 3D view"><b class="vlbl">3D</b></button>
-        <button class="icon-btn view-chip touch-only" data-act="orient" aria-label="Portrait / landscape"><svg viewBox="0 0 24 24" class="oico"><rect x="7" y="3" width="10" height="18" rx="2.5"/><path d="M11 18h2"/></svg><b class="olbl">Portrait</b></button>
+        <button class="view-toggle" data-act="view" role="switch" aria-checked="false" aria-label="2D view (saves battery)" title="3D / 2D view">
+          <i class="o3d"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg></i><i class="o2d"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/></svg></i>
+        </button>
     </div>
     <div class="card menu-card">
       <nav class="game-tabs" id="gameTabs" aria-label="Choose a game">
@@ -88,6 +90,10 @@
       <button id="btnOnline" class="btn btn-orange">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
         <span class="lbl">Online<span class="sub">Find a match and start</span></span>
+      </button>
+      <button id="btnNearby" class="btn btn-wifi">
+        <svg viewBox="0 0 24 24"><path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19.2" r="1.3"/></svg>
+        <span class="lbl">Wi-Fi / Hotspot<span class="sub">Play nearby · no internet needed</span></span>
       </button>
       <div class="row">
         <button id="btnHelp" class="btn btn-purple small">How to play</button>
@@ -148,6 +154,17 @@
         <button id="btnJoin" class="btn btn-lime">Join</button>
       </div>
       </div>
+      <div class="nearby-box">
+        <p class="nearby-how">Everyone connects to the <b>same Wi-Fi</b> or to <b>one phone's hotspot</b>. No internet needed: the phones link up by scanning each other's QR code.</p>
+        <button id="btnLanHost" class="btn btn-wifi">
+          <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10 6h4M12 18h.01"/></svg>
+          <span class="lbl">Host a game<span class="sub">Your phone shows a QR code for each friend</span></span>
+        </button>
+        <button id="btnLanJoin" class="btn btn-purple">
+          <svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></svg>
+          <span class="lbl">Join a game<span class="sub">Scan the QR code on the host's phone</span></span>
+        </button>
+      </div>
       <p id="onlineMsg" class="err"></p>
       <button class="btn btn-ghost small" data-back>Back</button>
     </div>
@@ -177,6 +194,7 @@
       <div id="lobbySeats" class="seat-rows"></div>
       <p class="lobby-note" id="lobbyNote"></p>
       <p id="lobbyMsg" class="err"></p>
+      <button id="btnLanAdd" class="btn btn-teal hidden">＋ Add a player · show QR code</button>
       <button id="btnLobbyStart" class="btn btn-primary">Start game</button>
       <button id="btnLobbyLeave" class="btn btn-ghost small">Leave</button>
     </div>
@@ -211,6 +229,7 @@
       <div id="pauseScores" class="seat-rows"></div>
       <button id="btnResume" class="btn btn-primary">Resume</button>
       <button id="btnRestart" class="btn btn-ghost">Restart match</button>
+      <button id="btnPauseLan" class="btn btn-teal hidden">Re-add a player (QR)</button>
       <button id="btnPauseHelp" class="btn btn-ghost">How to play</button>
       <button id="btnPauseSettings" class="btn btn-ghost">Settings</button>
       <button id="btnQuit" class="btn btn-ghost danger">Quit to menu</button>
@@ -229,7 +248,7 @@
       <div class="seg" id="segSpecial"><button data-v="low">Low</button><button data-v="medium">Medium</button><button data-v="high">High</button></div>
       <p class="opt-note" id="specialNote"></p>
       <div class="optlbl">View</div>
-      <div class="seg" id="segView"><button data-v="3d">3D</button><button data-v="2d">2D (top-down)</button></div>
+      <div class="seg" id="segView"><button data-v="3d">3D</button><button data-v="2d">2D · battery saver</button></div>
       <div class="touch-only">
         <div class="optlbl">Screen</div>
         <div class="seg" id="segOrient"><button data-v="auto">Auto</button><button data-v="portrait">Portrait</button><button data-v="landscape">Landscape</button></div>
@@ -251,6 +270,23 @@
     </div>
   </section>
 
+  <!-- Nearby: QR codes instead of a server -->
+  <section id="scrLan" class="screen hidden">
+    <div class="card lan-card">
+      <h2 id="lanTitle">Nearby</h2>
+      <p id="lanText" class="lan-text"></p>
+      <canvas id="lanQr" width="320" height="320" class="hidden" aria-label="QR code"></canvas>
+      <div id="lanCam" class="lan-cam hidden"><video id="lanVideo" muted playsinline></video><i aria-hidden="true"></i></div>
+      <textarea id="lanCode" class="hidden" rows="4" spellcheck="false" autocomplete="off" placeholder="Paste the code here"></textarea>
+      <p id="lanErr" class="err"></p>
+      <button id="lanMain" class="btn btn-primary hidden">Next</button>
+      <div class="row">
+        <button id="lanAlt" class="btn btn-ghost small hidden">Type the code</button>
+        <button id="lanCancel" class="btn btn-ghost small">Cancel</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Message dialog -->
   <section id="scrMsg" class="screen hidden">
     <div class="card">
@@ -261,6 +297,7 @@
   </section>
 
   <noscript><p class="noscript">This game needs JavaScript.</p></noscript>
+  <script src="./vendor/qrcode.min.js" defer></script>
   <script type="module" src="./js/main.js"></script>
 </body>
 </html>

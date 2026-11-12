@@ -61,7 +61,12 @@ function addSpark(o) {
 const TYPES = ['peony', 'peony', 'ring', 'willow', 'crossette', 'palm', 'double', 'glitter'];
 
 // Launch n rockets in the given colour. power scales burst size.
+let enabled = true;
+// 2D lite mode: no background fireworks, flashes or confetti (saves battery / GPU)
+export function setEnabled(on) { enabled = on; if (!on) { rockets.length = 0; sparks.length = 0; fountains.length = 0; confetti.length = 0; } }
+
 export function launch(color, n = 3, power = 1, quiet = false) {
+  if (!enabled) return;
   if (document.hidden) return;
   const base = hexToRgb(color);
   for (let i = 0; i < n; i++) {
@@ -141,7 +146,7 @@ function explode(r) {
 // ---------------------------------------------------------------- fountains
 // Sparks spraying up from both bottom corners
 export function fountain(color, duration = 1.4, strength = 1) {
-  if (document.hidden) return;
+  if (document.hidden || !enabled) return;
   const c = hexToRgb(color);
   fountains.push({ x: W * 0.04, dir: 1, c, t: 0, life: duration, s: strength });
   fountains.push({ x: W * 0.96, dir: -1, c, t: 0, life: duration, s: strength });
@@ -150,7 +155,7 @@ export function fountain(color, duration = 1.4, strength = 1) {
 
 // ---------------------------------------------------------------- confetti
 export function confettiRain(color, count = 120) {
-  if (document.hidden) return;
+  if (document.hidden || !enabled) return;
   const base = hexToRgb(color);
   const extra = [[255, 255, 255], [255, 214, 64], [255, 110, 200]];
   for (let i = 0; i < count; i++) {
@@ -166,6 +171,7 @@ export function confettiRain(color, count = 120) {
 
 // ---------------------------------------------------------------- DOM layers
 export function flash(color) {
+  if (!enabled) return;
   const el = document.querySelector('#bg .flash');
   if (!el) return;
   el.style.setProperty('--flash', color);
@@ -175,6 +181,7 @@ export function flash(color) {
 }
 
 export function beams(color, seconds = 2.2) {
+  if (!enabled) return;
   const el = document.querySelector('#bg .beams');
   if (!el) return;
   el.style.setProperty('--beam', color);

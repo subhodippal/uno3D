@@ -4,7 +4,7 @@
 
 import { view } from './view.js';
 import * as THREE from '../vendor/three.module.min.js';
-import { tween, ease, updateTweens, wait } from './anim.js';
+import { tween, ease, updateTweens, wait, setTimeScale } from './anim.js';
 import { Fx3D, softSprite } from './fx3d.js';
 import { COLORS, SEATS, WILD, faceAt, faceKeyAt, parseFaceKey, paletteAt } from './rules.js';
 
@@ -234,8 +234,7 @@ function backTexture() {
   rr(g, -96, -56, 192, 112, 30);
   g.fillStyle = '#e53935'; g.fill();
   g.lineWidth = 7; g.strokeStyle = '#ffffff'; g.stroke();
-  inkText(g, 'COLOR', 0, -18, 44, '#ffd54a');
-  inkText(g, 'CARD', 0, 26, 46, '#ffd54a');
+  inkText(g, 'UNO', 0, 10, 44, '#ffd54a');
   g.restore();
   const t = makeTex(cv);
   texCache.set('back', t);
@@ -404,9 +403,11 @@ export class Arena {
     patch.position.y = 0.004;
     scene.add(patch);
 
+    const before = scene.children.length;
     this._trees();
     this._grass();
     this._clouds();
+    this.decor = scene.children.slice(before); // scenery that 2D mode hides
 
     // direction circle: white energy ring with lightning streaks racing the way play goes
     this._buildRing();
@@ -441,6 +442,7 @@ export class Arena {
       return m;
     });
     this.built = true;
+    if (this.lite) { this.decor.forEach((o) => { o.visible = false; }); this.sun.castShadow = false; }
     this.setDeckCount(this.deckCount);
   }
 
@@ -947,6 +949,7 @@ export class Arena {
 
   // fly a mesh into `parent` at pose s, with an arc and optional spin
   _moveTo(m, parent, s, dur, arc = 0, delay = 0, spin = 0) {
+    if (this.lite) { arc *= 0.25; spin = 0; delay *= 0.5; }
     const go = () => {
       if (m.parent !== parent) parent.attach(m);
       this._shadow(m, parent === this.scene);
@@ -1268,6 +1271,7 @@ export class Arena {
 
   // ---------------------------------------------------------------- effects
   cardFx(pos, id, color) {
+    if (this.lite) return;
     const c = this._face(id);
     const P = paletteAt(this.side);
     const hex = P[color]?.hex ?? 0xffffff;
@@ -1278,16 +1282,18 @@ export class Arena {
   }
 
   seatFx(seat, hex, big = false) {
+    if (this.lite) return;
     const p = this.seatWorld(seat);
     this.fx.shockwave(p, hex, big ? 4 : 2.4);
     this.fx.burst(p, hex, big ? 50 : 26, true, { speed: big ? 1.1 : 0.7, size: 0.12 });
   }
 
-  shake(amount = 0.2) { this.shakeAmt = Math.max(this.shakeAmt, amount); }
+  shake(amount = 0.2) { if (!this.lite) this.shakeAmt = Math.max(this.shakeAmt, amount); }
 
   celebrate(seat) {
     const p = this.seatWorld(seat);
     const cols = COLORS.map((c) => c.hex);
+    if (this.lite) { this.fx.confetti(60, 8); return; } // one small burst only
     this.fx.fireworks(p, cols, 6, 3);
     this.fx.confetti(260, 12);
     this.shake(0.3);
@@ -1336,16 +1342,22 @@ export class Arena {
     this.camera.updateMatrixWorld();
   }
 
+  // 2D = top-down view in "lite" mode: no shadows, no scenery, few effects, 30 fps, low resolution
   setFlat(on) {
     if (this.flat === on) return;
     this.flat = on;
-    this.frame();
+    this.lite = on;
+    setTimeScale(on ? 0.6 : 1);
+    if (this.sun) this.sun.castShadow = !on && this.quality === 'high';
+    this.decor?.forEach((o) => { o.visible = !on; });
+    if (on && this.fx?.effects) { this.fx.effects.forEach((e) => { e.age = e.life; }); } // let running effects end now
+    this.resize();
     this.layout(0.3);
   }
 
   resize() {
     const w = view.w, h = view.h;
-    const dprCap = this.quality === 'high' ? 2 : 1.25;
+    const dprCap = this.lite ? 1 : this.quality === 'high' ? 2 : 1.25;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
@@ -1486,6 +1498,7 @@ export class Arena {
 
   // ---------------------------------------------------------------- loop
   _loop(now) {
+    if (this.lite && now - this._clock < 31) return; // ~30 fps is plenty for a flat view
     const dt = Math.min(0.05, (now - this._clock) / 1000);
     this._clock = now;
     const t = now / 1000;

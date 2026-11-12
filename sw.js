@@ -1,6 +1,6 @@
 // Service worker: cache-first app shell so the game works offline.
 // Bump VERSION whenever you deploy changes.
-const VERSION = 'colorcard3d-v15';
+const VERSION = 'colorcard3d-v17';
 const ASSETS = [
   './',
   './index.html',
@@ -43,6 +43,9 @@ const ASSETS = [
   './audio/voice/teal.mp3',
   './audio/voice/orange.mp3',
   './audio/voice/purple.mp3',
+  './js/lan.js',
+  './vendor/qrcode.min.js',
+  './vendor/jsQR.min.js',
   './vendor/three.module.min.js',
   './vendor/peerjs.min.js',
   './icons/icon.svg',

@@ -66,7 +66,6 @@ class Sfx {
   // ---------------------------------------------------------------- voice
   _loadClips() {
     for (const k of Object.keys(VOICE_CLIPS)) {
-      console.log('$__Data: ', k, this._clips[k]);
       if (this._clips[k]) continue;
       this._clips[k] = fetch(`./audio/voice/${k}.mp3`)
         .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
